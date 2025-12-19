@@ -78,11 +78,41 @@ const getAiClient = (): GoogleGenAI => {
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Wraps an async operation with retry logic for 429 (Rate Limit) errors.
+ * Parses the error message to find a suggested wait time.
+ * Google API often returns "Please retry in X s." or "retryDelay":"Xs"
+ */
+const getRetryDelay = (error: any): number => {
+    let textToSearch = "";
+    
+    // Aggregate all possible error text sources
+    if (typeof error === 'string') textToSearch += error;
+    if (error.message) textToSearch += " " + error.message;
+    if (error.toString) textToSearch += " " + error.toString();
+    try {
+        textToSearch += " " + JSON.stringify(error);
+    } catch(e) {}
+
+    // Regex to find "retry in X.XXs" or "retryDelay":"Xs"
+    // Matches: "retry in 54.5s", "retryDelay": "54s", "retryDelay":"54s"
+    const match = textToSearch.match(/retry in\s+([0-9.]+)\s*s/i) || 
+                  textToSearch.match(/retryDelay"?\s*:\s*"?([0-9.]+)\s*s"?/i);
+                  
+    if (match && match[1]) {
+        // Return seconds parsed as milliseconds, plus a 2-second safety buffer
+        const seconds = parseFloat(match[1]);
+        console.log(`Detected API requested wait time: ${seconds}s`);
+        return Math.ceil(seconds * 1000) + 2000;
+    }
+    return 0;
+};
+
+/**
+ * Wraps an async operation with robust retry logic for 429 (Rate Limit) errors.
+ * It specifically handles long wait times requested by the API.
  */
 const retryOperation = async <T>(
     operation: () => Promise<T>, 
-    maxRetries: number = 3, 
+    maxRetries: number = 6, // Increased retries
     initialDelay: number = 2000
 ): Promise<T> => {
     let lastError: any;
@@ -92,16 +122,30 @@ const retryOperation = async <T>(
             return await operation();
         } catch (error: any) {
             lastError = error;
-            const errString = error.toString();
+            // Create a comprehensive string for checking error type
+            let errString = "";
+            try {
+                errString = (error.message || "") + (error.toString ? error.toString() : "") + JSON.stringify(error);
+            } catch(e) { errString = "unknown error"; }
             
             // Check for 429 (Resource Exhausted / Too Many Requests) or 503 (Service Unavailable)
             const isRateLimit = errString.includes('429') || errString.includes('RESOURCE_EXHAUSTED') || errString.includes('quota');
             const isServerOverload = errString.includes('503') || errString.includes('Overloaded');
 
             if ((isRateLimit || isServerOverload) && i < maxRetries) {
-                // Calculate delay with exponential backoff (2s, 4s, 8s)
-                const delay = initialDelay * Math.pow(2, i);
-                console.warn(`API Quota hit (429/503). Retrying in ${delay}ms... (Attempt ${i + 1}/${maxRetries})`);
+                // 1. Try to get exact wait time from the error message
+                let delay = getRetryDelay(error);
+                
+                // 2. If no specific time found, use exponential backoff
+                if (delay === 0) {
+                    delay = initialDelay * Math.pow(2, i);
+                }
+
+                // Log distinct warning so user knows it's waiting
+                const waitTimeSec = (delay/1000).toFixed(1);
+                console.warn(`API Rate Limit hit. Waiting ${waitTimeSec}s before attempt ${i + 2}/${maxRetries + 1}...`);
+                
+                // Wait the required amount
                 await wait(delay);
                 continue;
             }
@@ -120,7 +164,7 @@ const generateWithFallback = async (
     ai: GoogleGenAI, 
     params: any
 ): Promise<GenerateContentResponse> => {
-    // 1. Try Primary Model (with retries for 429s)
+    // 1. Try Primary Model (with robust retries)
     try {
         console.log(`Attempting generation with ${PRIMARY_IMAGE_MODEL}...`);
         return await retryOperation(() => ai.models.generateContent({
@@ -131,10 +175,11 @@ const generateWithFallback = async (
         const errString = error.toString();
         
         // 2. Check for Permission/Access errors (403/404) to switch models
+        // Note: 429 is handled inside retryOperation, so if we are here, retries failed or it's a diff error.
         if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND')) {
             console.warn(`Primary model ${PRIMARY_IMAGE_MODEL} failed (Access Restricted). Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
             
-            // Try Fallback Model (also with retries for 429s)
+            // Try Fallback Model
             return await retryOperation(() => ai.models.generateContent({
                 ...params,
                 model: FALLBACK_IMAGE_MODEL
