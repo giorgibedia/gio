@@ -73,31 +73,75 @@ const getAiClient = (): GoogleGenAI => {
 };
 
 /**
- * Executes a generation request with a fallback mechanism.
- * Tries the PRIMARY model first. If it fails with permission/access errors,
- * it retries with the FALLBACK model.
+ * Utility to wait for a specified duration
+ */
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Wraps an async operation with retry logic for 429 (Rate Limit) errors.
+ */
+const retryOperation = async <T>(
+    operation: () => Promise<T>, 
+    maxRetries: number = 3, 
+    initialDelay: number = 2000
+): Promise<T> => {
+    let lastError: any;
+    
+    for (let i = 0; i <= maxRetries; i++) {
+        try {
+            return await operation();
+        } catch (error: any) {
+            lastError = error;
+            const errString = error.toString();
+            
+            // Check for 429 (Resource Exhausted / Too Many Requests) or 503 (Service Unavailable)
+            const isRateLimit = errString.includes('429') || errString.includes('RESOURCE_EXHAUSTED') || errString.includes('quota');
+            const isServerOverload = errString.includes('503') || errString.includes('Overloaded');
+
+            if ((isRateLimit || isServerOverload) && i < maxRetries) {
+                // Calculate delay with exponential backoff (2s, 4s, 8s)
+                const delay = initialDelay * Math.pow(2, i);
+                console.warn(`API Quota hit (429/503). Retrying in ${delay}ms... (Attempt ${i + 1}/${maxRetries})`);
+                await wait(delay);
+                continue;
+            }
+            
+            // If it's not a retriable error, or we ran out of retries, break loop
+            break;
+        }
+    }
+    throw lastError;
+};
+
+/**
+ * Executes a generation request with a fallback mechanism and retry logic.
  */
 const generateWithFallback = async (
     ai: GoogleGenAI, 
     params: any
 ): Promise<GenerateContentResponse> => {
+    // 1. Try Primary Model (with retries for 429s)
     try {
         console.log(`Attempting generation with ${PRIMARY_IMAGE_MODEL}...`);
-        return await ai.models.generateContent({
+        return await retryOperation(() => ai.models.generateContent({
             ...params,
             model: PRIMARY_IMAGE_MODEL
-        });
+        }));
     } catch (error: any) {
         const errString = error.toString();
-        // Check for common access errors: 403 (Permission Denied), 404 (Not Found/Model doesn't exist for key)
+        
+        // 2. Check for Permission/Access errors (403/404) to switch models
         if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND')) {
             console.warn(`Primary model ${PRIMARY_IMAGE_MODEL} failed (Access Restricted). Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
-            return await ai.models.generateContent({
+            
+            // Try Fallback Model (also with retries for 429s)
+            return await retryOperation(() => ai.models.generateContent({
                 ...params,
                 model: FALLBACK_IMAGE_MODEL
-            });
+            }));
         }
-        // Rethrow other errors (like safety blocks or network issues)
+        
+        // Rethrow if it's a safety error or retries exhausted
         throw error;
     }
 };
@@ -440,11 +484,11 @@ export const enhancePrompt = async (
         parts.push({ text: userPrompt });
 
         // Using Gemini 2.5 Flash for text tasks to match user preference and ensuring compatibility
-        const response = await ai.models.generateContent({
+        const response = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
             model: 'gemini-2.5-flash-preview', 
             contents: { parts: parts },
             config: { systemInstruction: systemInstruction },
-        });
+        }));
 
         const enhanced = response.text?.trim();
         if (!enhanced) {
