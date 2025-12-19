@@ -10,8 +10,10 @@ import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 
 // Configuration for Intelligent Model Fallback
+// Using 2.5 Flash Image as primary. 
+// Fallback set to 2.0 Flash Exp which often has a separate quota bucket.
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image';
-const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
+const FALLBACK_IMAGE_MODEL = 'gemini-2.0-flash-exp';
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -75,8 +77,8 @@ const getRetryDelay = (error: any): number => {
     if (match && match[1]) {
         const seconds = parseFloat(match[1]);
         console.log(`Detected API requested wait time: ${seconds}s`);
-        // Increased buffer to 3s to account for Vercel/Client clock skew
-        return Math.ceil(seconds * 1000) + 3000;
+        // Add a small buffer
+        return Math.ceil(seconds * 1000) + 1000;
     }
     return 0;
 };
@@ -86,7 +88,7 @@ const getRetryDelay = (error: any): number => {
  */
 const retryOperation = async <T>(
     operation: () => Promise<T>, 
-    maxRetries: number = 5, 
+    maxRetries: number = 2, // Reduced retries to avoid long hangs
     initialDelay: number = 2000
 ): Promise<T> => {
     let lastError: any;
@@ -108,15 +110,16 @@ const retryOperation = async <T>(
                 let delay = getRetryDelay(error);
                 if (delay === 0) delay = initialDelay * Math.pow(2, i);
 
-                const waitTimeSec = (delay/1000).toFixed(1);
-                console.warn(`API Rate Limit hit. Waiting ${waitTimeSec}s before attempt ${i + 2}/${maxRetries + 1}...`);
-                
-                // UX Hack: If wait time is extremely long (e.g. > 20s), notify the user via console/alert so they don't think it froze.
-                // We use setTimeout to not block the thread immediately.
-                if (delay > 20000) {
-                    console.log(`%c NOTE: High traffic. AI requires a ${waitTimeSec}s cooldown.`, 'background: #222; color: #bada55; font-size:14px');
+                // UX IMPROVEMENT: If the API asks to wait more than 15 seconds, 
+                // it's better to fail fast and let the user try again later (or switch models)
+                // rather than freezing the app for a minute.
+                if (delay > 15000) {
+                    console.warn(`Wait time (${(delay/1000).toFixed(1)}s) is too long. Aborting retry to fallback.`);
+                    throw new Error(`High traffic: Server requested ${Math.round(delay/1000)}s wait. Please try again.`);
                 }
 
+                const waitTimeSec = (delay/1000).toFixed(1);
+                console.warn(`API Rate Limit hit. Waiting ${waitTimeSec}s before attempt ${i + 2}/${maxRetries + 1}...`);
                 await wait(delay);
                 continue;
             }
@@ -141,8 +144,10 @@ const generateWithFallback = async (
         }));
     } catch (error: any) {
         const errString = error.toString();
-        if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND')) {
-            console.warn(`Primary model failed. Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
+        // If it's a 429 (High traffic) or 403 (Permission), try the fallback model.
+        if (errString.includes('429') || errString.includes('High traffic') || errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND')) {
+            console.warn(`Primary model failed (${errString}). Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
+            
             return await retryOperation(() => ai.models.generateContent({
                 ...params,
                 model: FALLBACK_IMAGE_MODEL
@@ -395,8 +400,9 @@ export const enhancePrompt = async (
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
         }
         
+        // SWITCH to 1.5-flash for text tasks to save 2.5-image quota and ensure speed.
         const response = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
-            model: 'gemini-2.5-flash-preview', 
+            model: 'gemini-1.5-flash', 
             contents: { parts: parts },
             config: { systemInstruction: systemInstruction },
         }));
