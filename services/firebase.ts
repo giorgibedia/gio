@@ -23,16 +23,23 @@ let app: FirebaseApp | undefined;
 let database: Database | undefined;
 let auth: Auth | undefined;
 
-export const isFirebaseConfigured = !!(firebaseConfig.apiKey && firebaseConfig.databaseURL);
+// --- FIREBASE TEMPORARILY DISABLED FOR VERCEL STABILITY ---
+// To re-enable: Change this to `true`
+const ENABLE_FIREBASE = false; 
+
+export const isFirebaseConfigured = ENABLE_FIREBASE && !!(firebaseConfig.apiKey && firebaseConfig.databaseURL);
 
 if (isFirebaseConfigured) {
     try {
         app = initializeApp(firebaseConfig);
         database = getDatabase(app);
         auth = getAuth(app);
+        console.log("Firebase initialized successfully");
     } catch (e) {
         console.error("Firebase initialization error:", e);
     }
+} else {
+    console.warn("Firebase is temporarily disabled in code.");
 }
 
 export { database, auth };

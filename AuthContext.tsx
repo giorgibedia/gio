@@ -39,10 +39,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        // CRITICAL FIX: If Firebase is disabled (auth is undefined), 
+        // stop loading immediately so the app doesn't hang on the splash screen.
         if (!auth) {
+            console.log("Auth is disabled, loading app in guest mode.");
             setLoading(false);
             return;
         }
+
         const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
             // We now keep the currentUser even if anonymous, so AnalyticsService can use the UID.
             // The UI components (Header, App) will check 'user.isAnonymous' to decide what to show.
@@ -81,7 +85,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }, []);
 
     const signInWithGoogle = async () => {
-        if (!auth) throw new Error("Firebase Auth not initialized.");
+        if (!auth) {
+            alert("Login is temporarily disabled for maintenance.");
+            return;
+        }
         const provider = new GoogleAuthProvider();
         await signInWithPopup(auth, provider);
     };
@@ -97,7 +104,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const logout = async () => {
-        if (!auth) throw new Error("Firebase Auth not initialized.");
+        if (!auth) return;
         await signOut(auth);
     };
 

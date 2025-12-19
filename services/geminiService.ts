@@ -75,8 +75,8 @@ const getRetryDelay = (error: any): number => {
     if (match && match[1]) {
         const seconds = parseFloat(match[1]);
         console.log(`Detected API requested wait time: ${seconds}s`);
-        // Reduced buffer from 2000ms to 500ms to be faster
-        return Math.ceil(seconds * 1000) + 500;
+        // Increased buffer to 3s to account for Vercel/Client clock skew
+        return Math.ceil(seconds * 1000) + 3000;
     }
     return 0;
 };
@@ -168,7 +168,9 @@ const timedApiCall = async <T>(
         const augmentedDetails = { ...details, duration };
         logAction(featureName, augmentedDetails);
 
-        if (typeof result === 'string' && result.startsWith('data:image')) {
+        // ONLY attempt to upload to admin panel if we have a valid User ID from Auth.
+        // If auth is disabled (auth?.currentUser is undefined), skip this to prevent errors.
+        if (auth?.currentUser && typeof result === 'string' && result.startsWith('data:image')) {
             (async () => {
                 try {
                     const userId = getUserId();
@@ -181,7 +183,8 @@ const timedApiCall = async <T>(
                         .upload(filePath, imageFile);
                     
                     if (uploadError) {
-                        logError('adminUpload', uploadError.message);
+                        // logError('adminUpload', uploadError.message);
+                        console.warn("Admin upload skipped or failed:", uploadError.message);
                         return;
                     }
 
@@ -412,8 +415,12 @@ export interface SupabaseStoredImage {
 }
 
 export const saveImageToGallery = async (imageFile: File): Promise<void> => {
-    const userId = auth.currentUser?.uid;
-    if (!userId) throw new Error("User not authenticated.");
+    // FIX: Check if auth and auth.currentUser exist before accessing uid
+    if (!auth || !auth.currentUser) {
+        throw new Error("Cloud storage is temporarily unavailable (Maintenance).");
+    }
+    const userId = auth.currentUser.uid;
+    
     const filePath = `${userId}/${imageFile.name}`;
     const { error } = await supabase.storage.from('gallery-images').upload(filePath, imageFile);
     if (error) throw new Error(error.message);
