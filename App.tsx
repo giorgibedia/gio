@@ -4,100 +4,337 @@
 */
 
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import ReactCrop, { type Crop, type PixelCrop } from 'react-image-crop';
-import { generateEditedImage, generateFilteredImage, generateBackgroundAlteredImage } from './services/geminiService';
+import React, { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react';
+import { generateEditedImage, generateBackgroundAlteredImage, saveImageToGallery, generateImageFromText, generateMagicEdit, composeImages, generateLogo, dataURLtoFile, enhancePrompt } from './services/geminiService';
 import Header from './components/Header';
 import Spinner from './components/Spinner';
-import FilterPanel from './components/FilterPanel';
-import BackgroundPanel from './components/BackgroundPanel';
-import CropPanel from './components/CropPanel';
 import MaskingToolbar from './components/MaskingToolbar';
-import { UndoIcon, RedoIcon, EyeIcon } from './components/icons';
+import { UndoIcon, RedoIcon, EyeIcon, MagicWandIcon, PhotoIcon, BrushIcon, EraserIcon, CloudArrowUpIcon, SparkleIcon } from './components/icons';
 import StartScreen from './components/StartScreen';
 import { useTranslations } from './useTranslations';
+import Assistant from './components/Assistant';
+import { init as initAnalytics } from './services/analyticsService';
+import { useAuth } from './AuthContext';
+import LoadingScreen from './components/LoadingScreen';
 
-// Helper to convert a data URL string to a File object
-const dataURLtoFile = (dataurl: string, filename: string): File => {
-    const arr = dataurl.split(',');
-    if (arr.length < 2) throw new Error("Invalid data URL");
-    const mimeMatch = arr[0].match(/:(.*?);/);
-    if (!mimeMatch || !mimeMatch[1]) throw new Error("Could not parse MIME type from data URL");
+// Lazy load components for better performance
+const BackgroundPanel = lazy(() => import('./components/BackgroundPanel'));
+const MagicPanel = lazy(() => import('./components/MagicPanel'));
+const LogoMakerPanel = lazy(() => import('./components/LogoMakerPanel'));
+const AboutScreen = lazy(() => import('./components/AboutScreen'));
+const AdminPanelScreen = lazy(() => import('./components/AiPanelScreen'));
+const AuthScreen = lazy(() => import('./components/AuthScreen'));
+const BetaDisclaimer = lazy(() => import('./components/BetaDisclaimer'));
+const ProfileSettingsScreen = lazy(() => import('./components/ProfileSettingsScreen'));
+// GalleryScreen is a named export, so it needs a special import syntax for lazy loading
+const GalleryScreenLazy = lazy(() => import('./components/StartScreen').then(module => ({ default: module.GalleryScreen })));
 
-    const mime = mimeMatch[1];
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while(n--){
-        u8arr[n] = bstr.charCodeAt(n);
+
+
+// Helper to convert a File object to a data URL string.
+const fileToDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = (error) => reject(error);
+        reader.readAsDataURL(file);
+    });
+};
+
+/**
+ * Processes an image file by resizing it to a dynamically determined maximum dimension
+ * and normalizing it to JPEG format. This function balances quality with device performance.
+ * @param file The original image file.
+ * @returns A promise that resolves to the processed File object in JPEG format.
+ */
+const processImageFile = (file: File): Promise<File> => {
+  return new Promise((resolve, reject) => {
+    // Dynamically determine the max dimension based on device memory to prevent crashes on older phones.
+    // 'navigator.deviceMemory' is a hint, values are in GB (e.g., 1, 2, 4, 8).
+    // It's supported in Chrome-based browsers.
+    const deviceMemory = (navigator as any).deviceMemory;
+    let maxDimension = 3072; // A safe, high-quality default for most devices and browsers like Safari/Firefox.
+    if (deviceMemory) {
+        if (deviceMemory >= 4) {
+            maxDimension = 4096; // Use higher resolution for powerful devices.
+        } else {
+            maxDimension = 3072; // Use a safer resolution for mid-range devices.
+        }
     }
-    return new File([u8arr], filename, {type:mime});
-}
+    console.log(`Processing image with max dimension: ${maxDimension}px (Device Memory: ${deviceMemory || 'N/A'}GB)`);
 
-type Tab = 'retouch' | 'people' | 'background' | 'filters' | 'crop';
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      if (!e.target?.result || typeof e.target.result !== 'string') {
+        return reject(new Error('FileReader did not return a valid data URL.'));
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+
+        // Determine new dimensions if resizing is needed
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round(height * (maxDimension / width));
+            width = maxDimension;
+          } else {
+            width = Math.round(width * (maxDimension / height));
+            height = maxDimension;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        
+        if (!ctx) {
+          return reject(new Error('Could not get 2D context from canvas for image processing.'));
+        }
+        
+        // Fill background with white before drawing. This is crucial for converting images 
+        // with transparency (like PNG) to JPEG, which doesn't support transparency.
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Increased quality from 0.9 to 0.92 for better results without a large file size penalty.
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            return reject(new Error('Failed to convert canvas to blob during processing.'));
+          }
+          
+          // Create a safe filename
+          const baseName = file.name.substring(0, file.name.lastIndexOf('.')) || `image-${Date.now()}`;
+          const safeName = baseName.replace(/[^a-zA-Z0-9_-]/g, '_') + '.jpeg';
+
+          const processedFile = new File([blob], safeName, {
+            type: 'image/jpeg',
+            lastModified: Date.now(),
+          });
+          resolve(processedFile);
+        }, 'image/jpeg', 0.92);
+      };
+
+      img.onerror = (error) => {
+        console.error("Image loading from data URL error:", error);
+        reject(new Error(`The image could not be loaded. It may be corrupt or in an unsupported format.`));
+      };
+
+      img.src = e.target.result;
+    };
+
+    reader.onerror = (error) => {
+      console.error("FileReader error:", error);
+      reject(new Error('The selected image could not be read. Please try a different file.'));
+    };
+
+    reader.readAsDataURL(file);
+  });
+};
+
+
+// Helper function to add a watermark to an image data URL
+const addWatermark = (dataUrl: string): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+      if (!ctx) {
+        return reject(new Error('Could not get 2D context from canvas for watermarking.'));
+      }
+
+      // Draw the original image
+      ctx.drawImage(img, 0, 0);
+
+      // --- Smart Watermark Check ---
+      // Check for a magic pixel at (0, 0) to see if watermark already exists
+      const markerPixel = ctx.getImageData(0, 0, 1, 1).data;
+      // R=1, G=2, B=3, A=255 is our unique marker
+      if (markerPixel[0] === 1 && markerPixel[1] === 2 && markerPixel[2] === 3 && markerPixel[3] === 255) {
+        console.log("Watermark already exists. Skipping.");
+        resolve(dataUrl); // Resolve with the original image
+        return;
+      }
+
+      // --- Watermark styling ---
+      // Make font size proportional to image height, with a minimum size
+      const fontSize = Math.max(14, Math.round(canvas.height * 0.025)); 
+      ctx.font = `bold ${fontSize}px "Inter", sans-serif`;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'; // White with 50% opacity
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'bottom';
+      
+      // --- Watermark position ---
+      const margin = Math.round(canvas.height * 0.02); // Margin proportional to image size
+      const x = canvas.width - margin;
+      const y = canvas.height - margin;
+
+      // Draw the watermark text
+      ctx.fillText('By G.B', x, y);
+
+      // --- Add the magic pixel marker ---
+      ctx.fillStyle = 'rgba(1, 2, 3, 1)'; // Our unique, nearly invisible marker color
+      ctx.fillRect(0, 0, 1, 1);
+
+      // Get the new data URL and resolve
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => {
+      reject(new Error('Image could not be loaded for watermarking.'));
+    };
+    img.src = dataUrl;
+  });
+};
+
+
+type Tab = 'retouch' | 'background' | 'magic' | 'logoMaker';
 type MaskingTool = 'brush' | 'eraser';
+type Page = 'main' | 'about' | 'gallery' | 'settings';
 
 const App: React.FC = () => {
   const { t } = useTranslations();
-  const [history, setHistory] = useState<File[]>([]);
+  const { user, loading: isAuthLoading } = useAuth();
+  const [isAppLoading, setIsAppLoading] = useState(true);
+  const [isFadingOut, setIsFadingOut] = useState(false);
+  const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
   const [prompt, setPrompt] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isEnhancing, setIsEnhancing] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('retouch');
+  const [page, setPage] = useState<Page>('main');
+  const [showWelcomeScreen, setShowWelcomeScreen] = useState(false);
   
+  // Admin & AI Panel State
+  // Initialize synchronously from URL to prevent race conditions
+  const [isAdminView, setIsAdminView] = useState(() => {
+    if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        // Use 'panel=secure_dashboard' instead of 'admin=true'
+        return params.get('panel') === 'secure_dashboard';
+    }
+    return false;
+  });
+
+  const [showAuthScreen, setShowAuthScreen] = useState<boolean>(false);
+  
+  // Toolbar scroll fade state
+  const [showScrollFade, setShowScrollFade] = useState(false);
+
   // Masking state
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasMask, setHasMask] = useState(false);
   const [brushSize, setBrushSize] = useState(40);
   const [activeTool, setActiveTool] = useState<MaskingTool>('brush');
   
-  // Cropping state
-  const [crop, setCrop] = useState<Crop>();
-  const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
-  const [aspect, setAspect] = useState<number | undefined>();
+  // Magic Panel State
+  const [secondImage, setSecondImage] = useState<string | null>(null);
+  
+  // Logo Maker State
+  const [logoInProgress, setLogoInProgress] = useState<string | null>(null);
+  const [logoBackgroundImage, setLogoBackgroundImage] = useState<string | null>(null);
   
   const [isComparing, setIsComparing] = useState<boolean>(false);
   
   const imgRef = useRef<HTMLImageElement>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const lastPosition = useRef<{ x: number; y: number } | null>(null);
+  const isCancelledRef = useRef(false);
+
+  // Pan & Zoom state
+  const imageContainerRef = useRef<HTMLDivElement>(null);
+  // FIX: Add explicit type to `useState` for `viewTransform` to resolve type inference issues.
+  const [viewTransform, setViewTransform] = useState<{ scale: number; x: number; y: number; }>({ scale: 1, x: 0, y: 0 });
+  const pointers = useRef<Map<number, { x: number, y: number }>>(new Map());
+  // FIX: Add explicit types to refs to resolve type inference issues.
+  const panStartCoords = useRef<{ x: number; y: number; }>({ x: 0, y: 0 });
+  const lastPan = useRef<{ x: number; y: number; }>({ x: 0, y: 0 });
+  const pinchStartDist = useRef(0);
+  const lastScale = useRef(1);
+  
+  // Mobile detection
+  const [isMobile, setIsMobile] = useState(false);
 
   const currentImage = history[historyIndex] ?? null;
   const originalImage = history[0] ?? null;
 
-  const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null);
-  const [originalImageUrl, setOriginalImageUrl] = useState<string | null>(null);
+  // Apply theme on initial load
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('appTheme') || 'blue';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  }, []);
 
-  // Effect to create and revoke object URLs safely for the current image
+  // Effect for handling the initial loading screen
+  useEffect(() => {
+    if (!isAuthLoading) {
+        // Start the fade-out animation
+        setIsFadingOut(true);
+        // Set a timeout to unmount the loading screen after the animation completes
+        const timer = setTimeout(() => {
+            setIsAppLoading(false);
+        }, 500); // This duration must match the transition duration in LoadingScreen.tsx
+        return () => clearTimeout(timer);
+    }
+  }, [isAuthLoading]);
+
   useEffect(() => {
     if (currentImage) {
-      const url = URL.createObjectURL(currentImage);
-      setCurrentImageUrl(url);
-      return () => URL.revokeObjectURL(url);
+        document.body.classList.add('editing');
     } else {
-      setCurrentImageUrl(null);
+        document.body.classList.remove('editing');
     }
   }, [currentImage]);
   
-  // Effect to create and revoke object URLs safely for the original image
+  // Mobile detection effect
   useEffect(() => {
-    if (originalImage) {
-      const url = URL.createObjectURL(originalImage);
-      setOriginalImageUrl(url);
-      return () => URL.revokeObjectURL(url);
+    const checkIsMobile = () => {
+        // 'pointer: coarse' is a reliable indicator for touch-primary devices.
+        const mobileCheck = window.matchMedia('(pointer: coarse)').matches;
+        setIsMobile(mobileCheck);
+    };
+    checkIsMobile();
+    window.addEventListener('resize', checkIsMobile);
+    return () => window.removeEventListener('resize', checkIsMobile);
+  }, []);
+
+  // Admin mode & Analytics Init Effect
+  useEffect(() => {
+    if (isAdminView) {
+        document.body.classList.add('admin-view');
     } else {
-      setOriginalImageUrl(null);
+        document.body.classList.remove('admin-view');
     }
-  }, [originalImage]);
+    initAnalytics();
+  }, [isAdminView]);
+
+  // Effect to check for welcome screen
+  useEffect(() => {
+    const welcomeScreenAccepted = localStorage.getItem('welcomeScreenAccepted');
+    if (welcomeScreenAccepted !== 'true') {
+      setShowWelcomeScreen(true);
+    }
+  }, []);
+  
+  const isDrawingTabActive = activeTab === 'retouch';
   
   // Effect to resize mask canvas to match the displayed image
   useEffect(() => {
     const canvas = maskCanvasRef.current;
     const previewCanvas = previewCanvasRef.current;
     const image = imgRef.current;
-    if (!['retouch', 'people'].includes(activeTab) || !canvas || !previewCanvas || !image) return;
+    if (!isDrawingTabActive || !canvas || !previewCanvas || !image) return;
 
     const setCanvasSize = () => {
         canvas.width = image.clientWidth;
@@ -116,10 +353,21 @@ const App: React.FC = () => {
     resizeObserver.observe(image);
 
     return () => resizeObserver.disconnect();
-  }, [currentImageUrl, activeTab]);
+  }, [currentImage, activeTab, isDrawingTabActive]);
 
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < history.length - 1;
+
+  const resetView = useCallback(() => {
+    setViewTransform({ scale: 1, x: 0, y: 0 });
+    lastScale.current = 1;
+    lastPan.current = { x: 0, y: 0 };
+    pointers.current.clear();
+  }, []);
+
+  useEffect(() => {
+    resetView();
+  }, [currentImage, activeTab, resetView]);
   
   const clearMask = useCallback(() => {
     const canvas = maskCanvasRef.current;
@@ -129,27 +377,72 @@ const App: React.FC = () => {
     }
     setHasMask(false);
   }, []);
+  
+  // Logic for the mobile toolbar scroll fade effect
+  const checkScroll = useCallback(() => {
+    const el = toolbarRef.current;
+    if (el) {
+        const isScrollable = el.scrollWidth > el.clientWidth;
+        // Check if scrolled almost to the end (within 1px)
+        const isScrolledToEnd = el.scrollWidth - el.scrollLeft - el.clientWidth < 1;
+        setShowScrollFade(isScrollable && !isScrolledToEnd);
+    }
+  }, []);
 
-  const addImageToHistory = useCallback((newImageFile: File) => {
+  // Effect to check scroll state on layout changes and resize
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+
+    // Initial check after layout settles
+    const timer = setTimeout(checkScroll, 100);
+    
+    window.addEventListener('resize', checkScroll);
+    
+    // The ResizeObserver is robust for cases where content might change.
+    const observer = new ResizeObserver(checkScroll);
+    observer.observe(el);
+
+    return () => {
+        clearTimeout(timer);
+        window.removeEventListener('resize', checkScroll);
+        observer.disconnect();
+    };
+  }, [currentImage, checkScroll]);
+
+  const addImageToHistory = useCallback((newImageDataUrl: string) => {
     const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(newImageFile);
+    newHistory.push(newImageDataUrl);
     setHistory(newHistory);
     setHistoryIndex(newHistory.length - 1);
-    // Reset transient states after an action
-    setCrop(undefined);
-    setCompletedCrop(undefined);
     clearMask();
   }, [history, historyIndex, clearMask]);
 
-  const handleImageUpload = useCallback((file: File) => {
+  const handleImageUpload = useCallback(async (file: File) => {
     setError(null);
-    setHistory([file]);
-    setHistoryIndex(0);
-    setActiveTab('retouch');
-    setCrop(undefined);
-    setCompletedCrop(undefined);
-    clearMask();
-  }, [clearMask]);
+    setIsLoading(true);
+    try {
+        // This function now dynamically determines the best resolution
+        // based on device capabilities to balance quality and performance.
+        const processedFile = await processImageFile(file);
+        const imageUrl = await fileToDataUrl(processedFile);
+        
+        setHistory([imageUrl]);
+        setHistoryIndex(0);
+        setActiveTab('retouch');
+        setPage('main');
+        clearMask();
+        resetView();
+    } catch (err) {
+        console.error("Image processing failed:", err);
+        const errorMessage = err instanceof Error ? err.message : 'The selected image could not be loaded. Please try a different file.';
+        setError(errorMessage);
+        setHistory([]);
+        setHistoryIndex(-1);
+    } finally {
+        setIsLoading(false);
+    }
+  }, [clearMask, resetView]);
 
   const generateMaskFile = useCallback(async (): Promise<File | null> => {
     if (!maskCanvasRef.current || !imgRef.current) return null;
@@ -177,8 +470,30 @@ const App: React.FC = () => {
     ctx.putImageData(imageData, 0, 0);
 
     const maskDataUrl = offscreenCanvas.toDataURL('image/png');
-    return dataURLtoFile(maskDataUrl, 'mask.png');
+    return await dataURLtoFile(maskDataUrl, 'mask.png');
   }, []);
+
+  const handleCancelGeneration = useCallback(() => {
+    isCancelledRef.current = true;
+    setIsLoading(false);
+  }, []);
+
+  const handleEnhancePrompt = useCallback(async (currentPrompt: string, contextImage?: string | null): Promise<string> => {
+    if (!currentPrompt.trim()) return currentPrompt;
+    
+    setIsEnhancing(true);
+    setError(null);
+    try {
+        const enhanced = await enhancePrompt(currentPrompt, contextImage);
+        return enhanced;
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : t('errorUnknown');
+        setError(`${t('errorEnhanceFailed')} ${errorMessage}`);
+        return currentPrompt; // Return original on error
+    } finally {
+        setIsEnhancing(false);
+    }
+  }, [t]);
 
   const handleGenerate = useCallback(async () => {
     if (!currentImage) return;
@@ -191,6 +506,7 @@ const App: React.FC = () => {
         return;
     }
 
+    isCancelledRef.current = false;
     setIsLoading(true);
     setError(null);
     
@@ -202,511 +518,726 @@ const App: React.FC = () => {
         }
 
         const editedImageUrl = await generateEditedImage(currentImage, prompt, maskFile);
-        const newImageFile = dataURLtoFile(editedImageUrl, `edited-${Date.now()}.png`);
-        addImageToHistory(newImageFile);
+        if (isCancelledRef.current) return;
+        
+        const watermarkedImageUrl = await addWatermark(editedImageUrl);
+        addImageToHistory(watermarkedImageUrl);
     } catch (err) {
+        if (isCancelledRef.current) return;
         const errorMessage = err instanceof Error ? err.message : t('errorUnknown');
         setError(`${t('errorGenerateFailed')} ${errorMessage}`);
-        console.error(err);
     } finally {
         setIsLoading(false);
     }
-  }, [currentImage, prompt, hasMask, addImageToHistory, generateMaskFile, t]);
-  
-  const handleRemovePerson = useCallback(async () => {
-    if (!currentImage) return;
+  }, [currentImage, prompt, hasMask, generateMaskFile, t, addImageToHistory]);
 
-    if (!hasMask) {
-        setError(t('errorPaintMaskPerson'));
-        return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-        const maskFile = await generateMaskFile();
-        if (!maskFile) {
-            setError(t('errorCreateMask'));
-            return;
-        }
-        const removePrompt = "Realistically and seamlessly remove the person in the masked area, intelligently filling in the background.";
-        const editedImageUrl = await generateEditedImage(currentImage, removePrompt, maskFile);
-        const newImageFile = dataURLtoFile(editedImageUrl, `removed-${Date.now()}.png`);
-        addImageToHistory(newImageFile);
-    } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : t('errorUnknown');
-        setError(`${t('errorRemovePersonFailed')} ${errorMessage}`);
-        console.error(err);
-    } finally {
-        setIsLoading(false);
-    }
-  }, [currentImage, hasMask, addImageToHistory, generateMaskFile, t]);
-  
-  const handleApplyFilter = useCallback(async (filterPrompt: string) => {
-    if (!currentImage) return;
-    
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-        const filteredImageUrl = await generateFilteredImage(currentImage, filterPrompt);
-        const newImageFile = dataURLtoFile(filteredImageUrl, `filtered-${Date.now()}.png`);
-        addImageToHistory(newImageFile);
-    } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : t('errorUnknown');
-        setError(`${t('errorApplyFilterFailed')} ${errorMessage}`);
-        console.error(err);
-    } finally {
-        setIsLoading(false);
-    }
-  }, [currentImage, addImageToHistory, t]);
-  
   const handleApplyBackgroundChange = useCallback(async (backgroundPrompt: string) => {
     if (!currentImage) return;
     
+    isCancelledRef.current = false;
     setIsLoading(true);
     setError(null);
     
     try {
         const adjustedImageUrl = await generateBackgroundAlteredImage(currentImage, backgroundPrompt);
-        const newImageFile = dataURLtoFile(adjustedImageUrl, `background-${Date.now()}.png`);
-        addImageToHistory(newImageFile);
+        if (isCancelledRef.current) return;
+        
+        const watermarkedImageUrl = await addWatermark(adjustedImageUrl);
+        addImageToHistory(watermarkedImageUrl);
     } catch (err) {
+        if (isCancelledRef.current) return;
         const errorMessage = err instanceof Error ? err.message : t('errorUnknown');
         setError(`${t('errorBackgroundChangeFailed')} ${errorMessage}`);
-        console.error(err);
     } finally {
         setIsLoading(false);
     }
-  }, [currentImage, addImageToHistory, t]);
+  }, [currentImage, t, addImageToHistory]);
 
-  const handleApplyCrop = useCallback(() => {
-    if (!completedCrop || !imgRef.current) {
-        setError(t('errorSelectCropArea'));
+  const handleMagicGenerate = useCallback(async () => {
+    if (!prompt.trim()) {
+        setError(t('errorEnterDescription'));
         return;
     }
+    isCancelledRef.current = false;
+    setIsLoading(true);
+    setError(null);
 
-    const image = imgRef.current;
-    const canvas = document.createElement('canvas');
-    const scaleX = image.naturalWidth / image.width;
-    const scaleY = image.naturalHeight / image.height;
-    
-    canvas.width = completedCrop.width;
-    canvas.height = completedCrop.height;
-    const ctx = canvas.getContext('2d');
+    try {
+        let finalImageUrl: string;
+        if (currentImage && secondImage) {
+            // Case 3: Compose two images with a prompt
+            finalImageUrl = await composeImages(currentImage, secondImage, prompt);
+        } else if (currentImage) {
+            // Case 2: Maskless edit on one image
+            finalImageUrl = await generateMagicEdit(currentImage, prompt);
+        } else {
+            // Case 1: Generate new image from text
+            const imageUrl = await generateImageFromText(prompt);
+            const watermarkedImageUrl = await addWatermark(imageUrl);
+            setHistory([watermarkedImageUrl]);
+            setHistoryIndex(0);
+            clearMask();
+            resetView();
+            setIsLoading(false);
+            return;
+        }
 
-    if (!ctx) {
-        setError(t('errorProcessCrop'));
-        return;
+        if (isCancelledRef.current) return;
+        const watermarkedImageUrl = await addWatermark(finalImageUrl);
+        addImageToHistory(watermarkedImageUrl);
+
+    } catch (err) {
+        if (isCancelledRef.current) return;
+        const errorMessage = err instanceof Error ? err.message : t('errorUnknown');
+        setError(`${t('errorGenerateFailed')} ${errorMessage}`);
+    } finally {
+        setIsLoading(false);
     }
+}, [currentImage, secondImage, prompt, addImageToHistory, t, clearMask, resetView]);
 
-    const pixelRatio = window.devicePixelRatio || 1;
-    canvas.width = completedCrop.width * pixelRatio;
-    canvas.height = completedCrop.height * pixelRatio;
-    ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-    ctx.imageSmoothingQuality = 'high';
+const handleGenerateLogo = useCallback(async (logoPrompt: string) => {
+    isCancelledRef.current = false;
+    setIsLoading(true);
+    setError(null);
 
-    ctx.drawImage(
-      image,
-      completedCrop.x * scaleX,
-      completedCrop.y * scaleY,
-      completedCrop.width * scaleX,
-      completedCrop.height * scaleY,
-      0,
-      0,
-      completedCrop.width,
-      completedCrop.height,
-    );
-    
-    const croppedImageUrl = canvas.toDataURL('image/png');
-    const newImageFile = dataURLtoFile(croppedImageUrl, `cropped-${Date.now()}.png`);
-    addImageToHistory(newImageFile);
+    try {
+        const newLogoUrl = await generateLogo(logoPrompt, logoInProgress, logoBackgroundImage);
+        if (isCancelledRef.current) return;
 
-  }, [completedCrop, addImageToHistory, t]);
-  
+        const watermarkedLogoUrl = await addWatermark(newLogoUrl);
+        setLogoInProgress(watermarkedLogoUrl);
+    } catch (err) {
+        if (isCancelledRef.current) return;
+        const errorMessage = err instanceof Error ? err.message : t('errorUnknown');
+        setError(`${t('errorGenerateLogoFailed')} ${errorMessage}`);
+    } finally {
+        setIsLoading(false);
+    }
+}, [t, logoInProgress, logoBackgroundImage]);
+
+const handleResetLogo = useCallback(() => {
+    setLogoInProgress(null);
+    setLogoBackgroundImage(null);
+}, []);
+
+
   // --- MASK DRAWING HANDLERS ---
-  const getCoords = (e: React.MouseEvent<HTMLCanvasElement>): { x: number, y: number } | null => {
-      const canvas = maskCanvasRef.current;
-      if (!canvas) return null;
-      const rect = canvas.getBoundingClientRect();
-      return {
-          x: e.clientX - rect.left,
-          y: e.clientY - rect.top,
-      };
-  };
+  // FIX: Update getCoords to handle PointerEvents directly, removing the need for unsafe casting.
+  const getCoords = useCallback((e: React.PointerEvent<HTMLDivElement>): { x: number, y: number } | null => {
+    const canvas = maskCanvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    
+    const clientX = e.clientX;
+    const clientY = e.clientY;
+
+    const screenX = clientX - rect.left;
+    const screenY = clientY - rect.top;
+
+    // Apply inverse transform to find point on the original, unscaled canvas
+    const { scale, x, y } = viewTransform;
+    return {
+        x: (screenX - x) / scale,
+        y: (screenY - y) / scale,
+    };
+  }, [viewTransform]);
 
   const clearBrushPreview = useCallback(() => {
     const canvas = previewCanvasRef.current;
     const ctx = canvas?.getContext('2d');
-    if (ctx) {
+    if (ctx && canvas) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
   }, []);
 
-  const startDrawing = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-      const coords = getCoords(e);
-      if (!coords) return;
-      setIsDrawing(true);
-      lastPosition.current = coords;
-      clearBrushPreview();
-  }, [clearBrushPreview]);
-
-  const draw = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (!isDrawing) return;
-      const coords = getCoords(e);
-      const canvas = maskCanvasRef.current;
-      const ctx = canvas?.getContext('2d');
-      if (!coords || !ctx || !lastPosition.current) return;
-      
-      ctx.beginPath();
-      ctx.lineWidth = brushSize;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      
-      if (activeTool === 'brush') {
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.strokeStyle = 'rgba(75, 128, 255, 0.7)';
-      } else { // eraser
-        ctx.globalCompositeOperation = 'destination-out';
-      }
-      
-      ctx.moveTo(lastPosition.current.x, lastPosition.current.y);
-      ctx.lineTo(coords.x, coords.y);
-      ctx.stroke();
-      
-      lastPosition.current = coords;
-
-  }, [isDrawing, brushSize, activeTool]);
-  
-  const stopDrawing = useCallback(() => {
-    setIsDrawing(false);
-    lastPosition.current = null;
-    if (maskCanvasRef.current) {
-        const context = maskCanvasRef.current.getContext('2d');
-        if (context) {
-            const imageData = context.getImageData(0, 0, maskCanvasRef.current.width, maskCanvasRef.current.height);
-            const hasContent = imageData.data.some(channel => channel !== 0);
-            setHasMask(hasContent);
-        }
-    }
-  }, []);
-
-  const drawBrushPreview = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+  const drawBrushPreview = useCallback((coords: {x: number, y: number}) => {
     const canvas = previewCanvasRef.current;
-    const ctx = canvas?.getContext('2d');
-    const coords = getCoords(e);
-    if (!ctx || !coords) return;
-
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.beginPath();
+    ctx.arc(coords.x, coords.y, brushSize / 2, 0, 2 * Math.PI);
+    ctx.fillStyle = activeTool === 'brush' ? 'rgba(59, 130, 246, 0.5)' : 'rgba(255, 0, 0, 0.5)';
+    ctx.fill();
+  }, [brushSize, activeTool]);
+
+  const draw = useCallback((start: { x: number; y: number }, end: { x: number; y: number }) => {
+    const canvas = maskCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    const computedStyle = getComputedStyle(document.documentElement);
+    const primaryColor = computedStyle.getPropertyValue('--color-primary-500').trim();
 
     ctx.beginPath();
-    ctx.arc(coords.x, coords.y, brushSize / 2, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-    ctx.lineWidth = 2;
-    ctx.fill();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.strokeStyle = activeTool === 'brush' ? primaryColor : 'black';
+    ctx.lineWidth = brushSize;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.globalCompositeOperation = activeTool === 'brush' ? 'source-over' : 'destination-out';
     ctx.stroke();
-  }, [brushSize]);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (isDrawing) {
-      draw(e);
-    } else {
-      drawBrushPreview(e);
-    }
-  }, [isDrawing, draw, drawBrushPreview]);
-
-  const handleMouseLeave = useCallback(() => {
-    stopDrawing();
-    clearBrushPreview();
-  }, [stopDrawing, clearBrushPreview]);
-
-
-  // --- HISTORY HANDLERS ---
-  const handleUndo = useCallback(() => {
-    if (canUndo) {
-      setHistoryIndex(historyIndex - 1);
-      clearMask();
-    }
-  }, [canUndo, historyIndex, clearMask]);
+  }, [brushSize, activeTool]);
   
-  const handleRedo = useCallback(() => {
-    if (canRedo) {
-      setHistoryIndex(historyIndex + 1);
-      clearMask();
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    // FIX: Corrected syntax error from `=>` to `=` in destructuring assignment.
+    const { clientX, clientY, pointerId } = e;
+    pointers.current.set(pointerId, { x: clientX, y: clientY });
+    
+    if (pointers.current.size === 1 && isDrawingTabActive) {
+        setIsDrawing(true);
+        // FIX: Removed unsafe type cast.
+        const coords = getCoords(e);
+        if (coords) {
+            lastPosition.current = coords;
+            // Draw a dot for single clicks
+            draw(coords, {x: coords.x, y: coords.y + 0.1});
+            setHasMask(true);
+        }
+    } else if (pointers.current.size === 1) { // Pan
+        panStartCoords.current = { x: clientX - lastPan.current.x, y: clientY - lastPan.current.y };
+    } else if (pointers.current.size === 2) { // Pinch
+// FIX: The type of `pts` was not being inferred correctly, causing "property does not exist on type 'unknown'" errors.
+// Adding an explicit type assertion to ensure TypeScript correctly interprets the array elements as point objects.
+        const pts = Array.from(pointers.current.values()) as {x: number, y: number}[];
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        pinchStartDist.current = dist;
+        lastScale.current = viewTransform.scale;
     }
-  }, [canRedo, historyIndex, clearMask]);
+
+  }, [isDrawingTabActive, getCoords, draw, viewTransform.scale]);
+  
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (pointers.current.has(e.pointerId)) {
+        pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    if (isDrawing && isDrawingTabActive && pointers.current.size === 1) {
+        // FIX: Removed unsafe type cast.
+        const newPosition = getCoords(e);
+        if (lastPosition.current && newPosition) {
+            draw(lastPosition.current, newPosition);
+            lastPosition.current = newPosition;
+        }
+    } else if (!isDrawing && isDrawingTabActive) {
+        // FIX: Removed unsafe type cast.
+        const coords = getCoords(e);
+        if(coords) drawBrushPreview(coords);
+    } else if (pointers.current.size === 1 && !isDrawingTabActive) { // Pan
+        e.preventDefault();
+        const currentX = e.clientX - panStartCoords.current.x;
+        const currentY = e.clientY - panStartCoords.current.y;
+        lastPan.current = { x: currentX, y: currentY };
+        setViewTransform(v => ({ ...v, x: currentX, y: currentY }));
+    } else if (pointers.current.size === 2) { // Pinch
+// FIX: The type of `pts` was not being inferred correctly, causing "property does not exist on type 'unknown'" errors.
+// Adding an explicit type assertion to ensure TypeScript correctly interprets the array elements as point objects.
+        const pts = Array.from(pointers.current.values()) as {x: number, y: number}[];
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        const scale = Math.max(0.1, lastScale.current * (dist / pinchStartDist.current));
+        setViewTransform(v => ({ ...v, scale }));
+    }
+
+  }, [isDrawing, isDrawingTabActive, getCoords, draw, drawBrushPreview]);
+  
+  const handlePointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+      pointers.current.delete(e.pointerId);
+      
+      if (isDrawingTabActive) {
+          setIsDrawing(false);
+          lastPosition.current = null;
+      }
+      
+      if (pointers.current.size < 2) {
+        pinchStartDist.current = 0;
+        lastScale.current = viewTransform.scale;
+      }
+
+      // BUG FIX: When transitioning from a pinch (2 pointers) to a pan (1 pointer),
+      // we must reset the pan starting coordinates for the remaining pointer to prevent a jump.
+      if (pointers.current.size === 1) {
+          // FIX: Add explicit type assertion to resolve 'property does not exist on type unknown' error.
+          const remainingPointer = Array.from(pointers.current.values())[0] as { x: number; y: number };
+          panStartCoords.current = { 
+              x: remainingPointer.x - lastPan.current.x, 
+              y: remainingPointer.y - lastPan.current.y 
+          };
+      }
+
+      if (pointers.current.size < 1) {
+        panStartCoords.current = {x: 0, y: 0};
+        const { x, y } = viewTransform;
+        lastPan.current = { x, y };
+      }
+
+  }, [isDrawingTabActive, viewTransform]);
+
+  const handlePointerLeave = useCallback(() => {
+    clearBrushPreview();
+  }, [clearBrushPreview]);
+
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const newScale = viewTransform.scale - e.deltaY * 0.001;
+    setViewTransform(v => ({ ...v, scale: Math.max(0.1, newScale) }));
+  }, [viewTransform.scale]);
+
+  const handleUndo = useCallback(() => {
+    if (canUndo) setHistoryIndex(historyIndex - 1);
+  }, [canUndo, historyIndex]);
+
+  const handleRedo = useCallback(() => {
+    // FIX: Redo should increment the history index, not decrement it.
+    if (canRedo) setHistoryIndex(historyIndex + 1);
+  }, [canRedo, historyIndex]);
 
   const handleReset = useCallback(() => {
-    if (history.length > 0) {
-      setHistoryIndex(0);
-      setError(null);
-      clearMask();
-    }
+    setHistory(history.slice(0, 1));
+    setHistoryIndex(0);
+    clearMask();
   }, [history, clearMask]);
 
-  const handleUploadNew = useCallback(() => {
-      setHistory([]);
-      setHistoryIndex(-1);
-      setError(null);
-      setPrompt('');
-      clearMask();
-  }, [clearMask]);
-
   const handleDownload = useCallback(() => {
-      if (currentImage) {
-          const link = document.createElement('a');
-          link.href = URL.createObjectURL(currentImage);
-          link.download = `edited-${currentImage.name}`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          URL.revokeObjectURL(link.href);
-      }
-  }, [currentImage]);
+    const imageToDownload = activeTab === 'logoMaker' ? logoInProgress : currentImage;
+    if (imageToDownload) {
+        const a = document.createElement('a');
+        a.href = imageToDownload;
+        a.download = `PixAI-${Date.now()}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }
+  }, [currentImage, activeTab, logoInProgress]);
+
+  const handleSave = useCallback(async () => {
+    const imageToSave = activeTab === 'logoMaker' ? logoInProgress : currentImage;
+    if (!imageToSave) return;
+    
+    // Allow logged in users (not anonymous) to save
+    if (!user || user.isAnonymous) {
+        setError("You must be logged in to save to the cloud.");
+        setShowAuthScreen(true);
+        return;
+    }
+    
+    setIsSaving(true);
+    setError(null);
+    try {
+        const imageFile = await dataURLtoFile(imageToSave, `gallery-${Date.now()}.png`);
+        await saveImageToGallery(imageFile);
+        alert('Image saved to your cloud!');
+    } catch (err) {
+        console.error("Error saving image to cloud:", err);
+        const errorMessage = err instanceof Error ? err.message : "Failed to save image to cloud.";
+        setError(errorMessage);
+    } finally {
+        setIsSaving(false);
+    }
+  }, [currentImage, user, activeTab, logoInProgress]);
+
+  const handleNewUpload = () => {
+    setHistory([]);
+    setHistoryIndex(-1);
+    setPage('main');
+    setActiveTab('retouch');
+    setLogoInProgress(null);
+    setLogoBackgroundImage(null);
+  };
+
+  const handleTabClick = (tabId: Tab) => {
+    if (tabId !== activeTab) {
+        clearMask();
+        setPrompt('');
+        setSecondImage(null);
+        setLogoBackgroundImage(null);
+        setError(null);
+    }
+    setActiveTab(tabId);
+  };
   
-  const handleFileSelect = (files: FileList | null) => {
-    if (files && files[0]) {
-      handleImageUpload(files[0]);
-    }
-  };
+  const handleAcceptWelcome = useCallback(() => {
+    localStorage.setItem('welcomeScreenAccepted', 'true');
+    setShowWelcomeScreen(false);
+  }, []);
 
-  const renderContent = () => {
-    if (error) {
-       return (
-           <div className="text-center animate-fade-in bg-red-500/10 border border-red-500/20 p-8 rounded-lg max-w-2xl mx-auto flex flex-col items-center gap-4">
-            <h2 className="text-2xl font-bold text-red-300">{t('errorOccurred')}</h2>
-            <p className="text-md text-red-400">{error}</p>
-            <button
-                onClick={() => setError(null)}
-                className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-6 rounded-lg text-md transition-colors"
-              >
-                {t('tryAgain')}
-            </button>
+  if (isAppLoading) {
+    return <LoadingScreen isLoaded={isFadingOut} />;
+  }
+
+  if (isAdminView) {
+    // If auth state is still loading, show a generic spinner to prevent flicker.
+    if (isAuthLoading) {
+      return (
+        <div className="bg-gray-900 min-h-screen w-full flex items-center justify-center">
+          <Spinner />
+        </div>
+      );
+    }
+    
+    // If not authenticated or IS ANONYMOUS (guest), force login for the admin panel.
+    // Anonymous users are not admins.
+    if (!user || user.isAnonymous) {
+      return (
+        <Suspense fallback={<div className="bg-gray-900 min-h-screen w-full flex items-center justify-center"><Spinner /></div>}>
+          {/* We wrap AuthScreen in a div to provide a consistent background */}
+          <div className="bg-gray-900 min-h-screen w-full">
+            <AuthScreen onClose={() => {
+              // If the user closes the login modal without signing in,
+              // remove the 'admin' query param and redirect them to the main app.
+              const params = new URLSearchParams(window.location.search);
+              params.delete('panel');
+              const newSearch = params.toString();
+              const newUrl = newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname;
+              window.history.replaceState({}, '', newUrl);
+              setIsAdminView(false);
+            }} />
           </div>
-        );
+        </Suspense>
+      );
     }
     
-    if (!currentImageUrl) {
-      return <StartScreen onFileSelect={handleFileSelect} />;
-    }
-
-    const imageDisplayWithCompare = (
-      <div className="relative">
-        {originalImageUrl && (
-            <img
-                key={originalImageUrl}
-                src={originalImageUrl}
-                alt="Original"
-                className="w-full h-auto object-contain max-h-[60vh] rounded-xl pointer-events-none"
-            />
-        )}
-        <img
-            ref={imgRef}
-            key={currentImageUrl}
-            src={currentImageUrl}
-            alt="Current"
-            className={`absolute top-0 left-0 w-full h-auto object-contain max-h-[60vh] rounded-xl transition-opacity duration-200 ease-in-out ${isComparing ? 'opacity-0' : 'opacity-100'}`}
-        />
-      </div>
-    );
-
-    const imageDisplayForMasking = (
-      <div className="relative cursor-none">
-        <img
-          ref={imgRef}
-          key={`masking-${currentImageUrl}`}
-          src={currentImageUrl}
-          alt="Edit this image"
-          className="w-full h-auto object-contain max-h-[60vh] rounded-xl pointer-events-none"
-        />
-        <canvas
-            ref={maskCanvasRef}
-            onMouseDown={startDrawing}
-            onMouseMove={handleMouseMove}
-            onMouseUp={stopDrawing}
-            onMouseLeave={handleMouseLeave}
-            className="absolute top-0 left-0 w-full h-full"
-        />
-        <canvas
-            ref={previewCanvasRef}
-            className="absolute top-0 left-0 w-full h-full pointer-events-none"
-        />
-      </div>
-    );
-    
-    const cropImageElement = (
-      <img 
-        ref={imgRef}
-        key={`crop-${currentImageUrl}`}
-        src={currentImageUrl} 
-        alt="Crop this image"
-        className="w-full h-auto object-contain max-h-[60vh] rounded-xl"
-      />
-    );
-
+    // If authenticated and not anonymous, show the admin panel.
     return (
-      <div className="w-full max-w-4xl mx-auto flex flex-col items-center gap-6 animate-fade-in">
-        <div className="relative w-full shadow-2xl rounded-xl overflow-hidden bg-black/20">
-            {isLoading && (
-                <div className="absolute inset-0 bg-black/70 z-30 flex flex-col items-center justify-center gap-4 animate-fade-in">
-                    <Spinner />
-                    <p className="text-gray-300">{t('aiWorking')}</p>
-                </div>
-            )}
-            
-            {activeTab === 'crop' ? (
-              <ReactCrop 
-                crop={crop} 
-                onChange={c => setCrop(c)} 
-                onComplete={c => setCompletedCrop(c)}
-                aspect={aspect}
-                className="max-h-[60vh]"
-              >
-                {cropImageElement}
-              </ReactCrop>
-            ) : ['retouch', 'people'].includes(activeTab) ? imageDisplayForMasking : imageDisplayWithCompare }
-        </div>
-        
-        <div className="w-full bg-gray-800/80 border border-gray-700/80 rounded-lg p-2 flex items-center justify-center gap-2 backdrop-blur-sm">
-            {(['retouch', 'people', 'background', 'filters', 'crop'] as Tab[]).map(tab => (
-                 <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`w-full capitalize font-semibold py-3 px-5 rounded-md transition-all duration-200 text-base ${
-                        activeTab === tab 
-                        ? 'bg-gradient-to-br from-blue-500 to-cyan-400 text-white shadow-lg shadow-cyan-500/40' 
-                        : 'text-gray-300 hover:text-white hover:bg-white/10'
-                    }`}
-                >
-                    {t(tab)}
-                </button>
-            ))}
-        </div>
-        
-        <div className="w-full">
-            {activeTab === 'retouch' && (
-                <div className="flex flex-col items-center gap-4">
-                    <MaskingToolbar 
-                        brushSize={brushSize}
-                        onBrushSizeChange={setBrushSize}
-                        activeTool={activeTool}
-                        onToolChange={setActiveTool}
-                        onClearMask={clearMask}
-                        isLoading={isLoading}
-                    />
-                    <p className="text-md text-gray-400">
-                        {hasMask ? t('promptDescribeEdit') : t('promptPaintMask')}
-                    </p>
-                    <form onSubmit={(e) => { e.preventDefault(); handleGenerate(); }} className="w-full flex items-center gap-2">
-                        <input
-                            type="text"
-                            value={prompt}
-                            onChange={(e) => setPrompt(e.target.value)}
-                            placeholder={hasMask ? t('placeholderRetouch') : t('placeholderPaintFirst')}
-                            className="flex-grow bg-gray-800 border border-gray-700 text-gray-200 rounded-lg p-5 text-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition w-full disabled:cursor-not-allowed disabled:opacity-60"
-                            disabled={isLoading || !hasMask}
-                        />
-                        <button 
-                            type="submit"
-                            className="bg-gradient-to-br from-blue-600 to-blue-500 text-white font-bold py-5 px-8 text-lg rounded-lg transition-all duration-300 ease-in-out shadow-lg shadow-blue-500/20 hover:shadow-xl hover:shadow-blue-500/40 hover:-translate-y-px active:scale-95 active:shadow-inner disabled:from-blue-800 disabled:to-blue-700 disabled:shadow-none disabled:cursor-not-allowed disabled:transform-none"
-                            disabled={isLoading || !prompt.trim() || !hasMask}
-                        >
-                            {t('generate')}
-                        </button>
-                    </form>
-                </div>
-            )}
-            {activeTab === 'people' && (
-              <div className="flex flex-col items-center gap-4">
-                <MaskingToolbar 
-                    brushSize={brushSize}
-                    onBrushSizeChange={setBrushSize}
-                    activeTool={activeTool}
-                    onToolChange={setActiveTool}
-                    onClearMask={clearMask}
-                    isLoading={isLoading}
-                />
-                <p className="text-md text-gray-400">
-                    {t('promptPaintMaskPerson')}
-                </p>
-                <button
-                    onClick={handleRemovePerson}
-                    className="w-full max-w-md bg-gradient-to-br from-red-600 to-red-500 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 ease-in-out shadow-lg shadow-red-500/20 hover:shadow-xl hover:shadow-red-500/40 hover:-translate-y-px active:scale-95 active:shadow-inner text-base disabled:from-red-800 disabled:to-red-700 disabled:shadow-none disabled:cursor-not-allowed disabled:transform-none"
-                    disabled={isLoading || !hasMask}
-                >
-                    {t('removePerson')}
-                </button>
-              </div>
-            )}
-            {activeTab === 'crop' && <CropPanel onApplyCrop={handleApplyCrop} onSetAspect={setAspect} isLoading={isLoading} isCropping={!!completedCrop?.width && completedCrop.width > 0} />}
-            {activeTab === 'background' && <BackgroundPanel onApplyBackgroundChange={handleApplyBackgroundChange} isLoading={isLoading} />}
-            {activeTab === 'filters' && <FilterPanel onApplyFilter={handleApplyFilter} isLoading={isLoading} />}
-        </div>
-        
-        <div className="flex flex-wrap items-center justify-center gap-3 mt-6">
-            <button 
-                onClick={handleUndo}
-                disabled={!canUndo}
-                className="flex items-center justify-center text-center bg-white/10 border border-white/20 text-gray-200 font-semibold py-3 px-5 rounded-md transition-all duration-200 ease-in-out hover:bg-white/20 hover:border-white/30 active:scale-95 text-base disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-white/5"
-                aria-label="Undo last action"
-            >
-                <UndoIcon className="w-5 h-5 mr-2" />
-                {t('undo')}
-            </button>
-            <button 
-                onClick={handleRedo}
-                disabled={!canRedo}
-                className="flex items-center justify-center text-center bg-white/10 border border-white/20 text-gray-200 font-semibold py-3 px-5 rounded-md transition-all duration-200 ease-in-out hover:bg-white/20 hover:border-white/30 active:scale-95 text-base disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-white/5"
-                aria-label="Redo last action"
-            >
-                <RedoIcon className="w-5 h-5 mr-2" />
-                {t('redo')}
-            </button>
-            
-            <div className="h-6 w-px bg-gray-600 mx-1 hidden sm:block"></div>
-
-            {canUndo && (
-              <button 
-                  onMouseDown={() => setIsComparing(true)}
-                  onMouseUp={() => setIsComparing(false)}
-                  onMouseLeave={() => setIsComparing(false)}
-                  onTouchStart={() => setIsComparing(true)}
-                  onTouchEnd={() => setIsComparing(false)}
-                  className="flex items-center justify-center text-center bg-white/10 border border-white/20 text-gray-200 font-semibold py-3 px-5 rounded-md transition-all duration-200 ease-in-out hover:bg-white/20 hover:border-white/30 active:scale-95 text-base"
-                  aria-label={t('compareAria')}
-              >
-                  <EyeIcon className="w-5 h-5 mr-2" />
-                  {t('compare')}
-              </button>
-            )}
-
-            <button 
-                onClick={handleReset}
-                disabled={!canUndo}
-                className="text-center bg-transparent border border-white/20 text-gray-200 font-semibold py-3 px-5 rounded-md transition-all duration-200 ease-in-out hover:bg-white/10 hover:border-white/30 active:scale-95 text-base disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-transparent"
-              >
-                {t('reset')}
-            </button>
-            
-            <button 
-                onClick={handleDownload}
-                className="flex-grow sm:flex-grow-0 ml-auto bg-gradient-to-br from-green-600 to-green-500 text-white font-bold py-3 px-5 rounded-md transition-all duration-300 ease-in-out shadow-lg shadow-green-500/20 hover:shadow-xl hover:shadow-green-500/40 hover:-translate-y-px active:scale-95 active:shadow-inner text-base"
-            >
-                {t('downloadImage')}
-            </button>
-        </div>
-      </div>
+      <Suspense fallback={<div className="bg-gray-900 min-h-screen w-full flex items-center justify-center"><Spinner /></div>}>
+        <AdminPanelScreen />
+      </Suspense>
     );
-  };
+  }
+
+  const tabs: { id: Tab; label: string; icon: React.ReactElement }[] = [
+    { id: 'retouch', label: t('retouch'), icon: <MagicWandIcon className="w-5 h-5" /> },
+    { id: 'background', label: t('background'), icon: <PhotoIcon className="w-5 h-5" /> },
+    { id: 'magic', label: t('magic'), icon: <SparkleIcon className="w-5 h-5" /> },
+    { id: 'logoMaker', label: t('logoMakerTab'), icon: <SparkleIcon className="w-5 h-5" /> },
+  ];
+  
+  const isPanningEnabled = !isDrawingTabActive;
+
+  const renderEditorContent = () => {
+    // This function is only called when currentImage is not null
+    return (
+        <>
+            {/* Left Panel: Toolbar */}
+            <aside className="w-full md:w-auto flex flex-col gap-4 animate-fade-in-left">
+                <div className="relative w-full md:w-auto bg-gray-800/50 border border-gray-700 rounded-lg backdrop-blur-sm">
+                    <div
+                        ref={toolbarRef}
+                        onScroll={checkScroll}
+                        className="flex flex-row md:flex-col items-center justify-start md:justify-center gap-2 p-2 overflow-x-auto no-scrollbar"
+                    >
+                        {tabs.map(tab => (
+                            <button
+                                key={tab.id}
+                                onClick={() => handleTabClick(tab.id)}
+                                disabled={isLoading || isEnhancing}
+                                className={`flex-shrink-0 flex md:flex-col items-center justify-center text-center gap-1 p-3 rounded-md transition-all duration-200 text-xs font-bold hover:scale-105 active:scale-95 ${activeTab === tab.id ? 'bg-[var(--color-primary-500)] text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                                aria-label={tab.label}
+                            >
+                                {tab.icon}
+                                <div className="hidden sm:flex items-center">
+                                    <span>{tab.label}</span>
+                                    {tab.id === 'magic' && <span className="ml-1.5 text-xs font-mono bg-fuchsia-500/30 text-fuchsia-300 px-1.5 py-0.5 rounded-full tracking-wider">BETA</span>}
+                                </div>
+                                 <span className="inline sm:hidden">{tab.label}</span>
+                            </button>
+                        ))}
+                    </div>
+                    {showScrollFade && (
+                        <div aria-hidden="true" className="absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-gray-800 to-transparent pointer-events-none md:hidden" />
+                    )}
+                </div>
+            </aside>
+
+            {/* Center Panel: Image Viewer or Logo Placeholder */}
+            {activeTab === 'logoMaker' ? (
+                logoInProgress ? (
+                    <div className="flex-grow flex items-center justify-center relative overflow-hidden animate-scale-in" ref={imageContainerRef}>
+                        <div 
+                            className="relative touch-none"
+                            style={{ cursor: isMobile ? 'default' : 'grab' }}
+                            onPointerDown={handlePointerDown}
+                            onPointerMove={handlePointerMove}
+                            onPointerUp={handlePointerUp}
+                            onPointerLeave={handlePointerUp}
+                        >
+                            <div style={{ transform: `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})`, transformOrigin: 'center center' }}>
+                                <img
+                                    ref={imgRef}
+                                    src={logoInProgress}
+                                    alt="Generated Logo"
+                                    className="max-w-full max-h-[55vh] md:max-h-[80vh] object-contain rounded-lg shadow-2xl"
+                                    draggable="false"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex-grow flex items-center justify-center relative overflow-hidden animate-scale-in p-8">
+                        <div className="text-center text-gray-500 bg-gray-800/30 border border-dashed border-gray-600 rounded-2xl p-12 max-w-lg">
+                            <SparkleIcon className="w-16 h-16 mx-auto text-[var(--color-primary-500)]/50 mb-4" />
+                            <h3 className="text-xl font-bold text-gray-400">{t('logoMakerTitle')}</h3>
+                            <p className="mt-2 text-gray-400">{t('logoMakerPlaceholderView')}</p>
+                        </div>
+                    </div>
+                )
+            ) : (
+                <div className="flex-grow flex items-center justify-center relative overflow-hidden animate-scale-in" ref={imageContainerRef} onWheel={handleWheel}>
+                    <div 
+                        className={`relative touch-none ${isPanningEnabled ? 'cursor-grab' : (isMobile ? '' : 'cursor-none')}`}
+                        onPointerDown={handlePointerDown}
+                        onPointerMove={handlePointerMove}
+                        onPointerUp={handlePointerUp}
+                        onPointerLeave={handlePointerUp} // Use up to end gesture
+                    >
+                        <div style={{ transform: `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})`, transformOrigin: 'center center' }}>
+                            <>
+                                <img
+                                    ref={imgRef}
+                                    src={isComparing && originalImage ? originalImage : currentImage!}
+                                    alt="Editable"
+                                    className="max-w-full max-h-[55vh] md:max-h-[80vh] object-contain rounded-lg shadow-2xl"
+                                    draggable="false"
+                                />
+                                {isDrawingTabActive && (
+                                    <>
+                                      <canvas
+                                          ref={maskCanvasRef}
+                                          className="absolute top-0 left-0 w-full h-full pointer-events-none opacity-40"
+                                      />
+                                      <canvas
+                                          ref={previewCanvasRef}
+                                          className="absolute top-0 left-0 w-full h-full pointer-events-none"
+                                      />
+                                    </>
+                                )}
+                            </>
+                        </div>
+                    </div>
+                    {currentImage && (
+                      <button
+                          onPointerDown={() => setIsComparing(true)}
+                          onPointerUp={() => setIsComparing(false)}
+                          onPointerLeave={() => setIsComparing(false)}
+                          disabled={isLoading}
+                          className="absolute bottom-4 right-4 z-10 flex items-center gap-2 bg-black/50 backdrop-blur-sm px-4 py-2 text-sm font-semibold text-white rounded-full hover:bg-black/70 transition-colors disabled:opacity-50 touch-none"
+                          aria-label={t('compareAria')}
+                      >
+                          <EyeIcon className="w-5 h-5" />
+                          <span className="hidden sm:inline">{t('compare')}</span>
+                      </button>
+                    )}
+                </div>
+            )}
+
+            {/* Right Panel: Controls */}
+            <aside className="w-full md:max-w-sm flex flex-col gap-4 animate-fade-in-right">
+                {error && (
+                    <div className="bg-red-500/20 border border-red-500/20 text-red-300 p-4 rounded-lg animate-fade-in">
+                        <h4 className="font-bold">{t('errorOccurred')}</h4>
+                        <p className="text-sm">{error}</p>
+                    </div>
+                )}
+                
+                <Suspense fallback={<div className="w-full h-48 flex items-center justify-center bg-gray-800/50 border border-gray-700 rounded-lg"><Spinner /></div>}>
+                    {activeTab === 'retouch' && (
+                        <div className="w-full bg-gray-800/50 border border-gray-700 rounded-lg p-4 flex flex-col gap-4 animate-fade-in backdrop-blur-sm">
+                           <div className={`text-center text-sm rounded-lg p-3 transition-colors ${hasMask ? 'bg-green-500/20 text-green-300' : 'bg-gray-700/80 text-gray-400'}`}>
+                               <p>{hasMask ? t('promptDescribeEdit') : t('promptPaintMask')}</p>
+                           </div>
+                           <div className="relative w-full">
+                                <textarea
+                                    value={prompt}
+                                    onChange={(e) => setPrompt(e.target.value)}
+                                    placeholder={hasMask ? t('placeholderRetouch') : t('placeholderPaintFirst')}
+                                    className="flex-grow bg-gray-800 border border-gray-600 text-gray-200 rounded-lg p-4 focus:ring-2 focus:ring-[var(--color-primary-500)] focus:outline-none transition w-full disabled:cursor-not-allowed disabled:opacity-60 text-base"
+                                    disabled={isLoading || !hasMask || isEnhancing}
+                                    rows={3}
+                                />
+                                <button
+                                    onClick={async () => {
+                                        const newPrompt = await handleEnhancePrompt(prompt, currentImage);
+                                        setPrompt(newPrompt);
+                                    }}
+                                    disabled={isLoading || isEnhancing || !prompt.trim() || !hasMask}
+                                    className="absolute bottom-3 right-3 p-2 rounded-full bg-[var(--color-primary-600)]/80 text-white hover:bg-[var(--color-primary-500)] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-[var(--color-primary-800)]"
+                                    title={t('enhancePrompt')}
+                                >
+                                    <SparkleIcon className="w-5 h-5" />
+                                </button>
+                           </div>
+                           <button
+                               onClick={handleGenerate}
+                               className="w-full bg-gradient-to-br from-[var(--color-primary-600)] to-[var(--color-primary-500)] text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 ease-in-out shadow-lg shadow-[var(--shadow-primary-light)] hover:shadow-xl hover:shadow-[var(--shadow-primary)] hover:-translate-y-px active:scale-95 active:shadow-inner text-base disabled:from-[var(--color-primary-800)] disabled:to-[var(--color-primary-700)] disabled:shadow-none disabled:cursor-not-allowed disabled:transform-none"
+                               disabled={isLoading || isEnhancing || !prompt.trim() || !hasMask}
+                           >
+                               {t('generate')}
+                           </button>
+                        </div>
+                    )}
+                    {activeTab === 'magic' && (
+                        <MagicPanel
+                          prompt={prompt}
+                          onPromptChange={setPrompt}
+                          onGenerate={handleMagicGenerate}
+                          isLoading={isLoading}
+                          hasImage={!!currentImage}
+                          secondImage={secondImage}
+                          onSecondImageChange={setSecondImage}
+                          currentImage={currentImage}
+                          isEnhancing={isEnhancing}
+                          onEnhance={handleEnhancePrompt}
+                        />
+                    )}
+                    {activeTab === 'logoMaker' && 
+                        <LogoMakerPanel 
+                            onGenerate={handleGenerateLogo} 
+                            onReset={handleResetLogo} 
+                            isLoading={isLoading} 
+                            backgroundImage={logoBackgroundImage}
+                            onBackgroundImageChange={setLogoBackgroundImage}
+                            contextImage={logoInProgress || logoBackgroundImage}
+                            isEnhancing={isEnhancing}
+                            onEnhance={handleEnhancePrompt}
+                        />
+                    }
+                    {activeTab === 'background' && <BackgroundPanel onApplyBackgroundChange={handleApplyBackgroundChange} isLoading={isLoading} currentImage={currentImage} isEnhancing={isEnhancing} onEnhance={handleEnhancePrompt}/>}
+                </Suspense>
+
+                {isDrawingTabActive && (
+                    <>
+                        <div className="w-full bg-gray-800/50 border border-gray-700 rounded-lg p-4 flex items-center justify-between gap-4 animate-fade-in backdrop-blur-sm">
+                            <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => setActiveTool('brush')}
+                                  disabled={isLoading || isEnhancing}
+                                  className={`p-3 rounded-md transition-colors duration-200 ${activeTool === 'brush' ? 'bg-[var(--color-primary-500)] text-white' : 'bg-white/10 hover:bg-white/20 text-gray-300'}`}
+                                  aria-label="Select Brush Tool"
+                                >
+                                  <BrushIcon className="w-6 h-6" />
+                                </button>
+                                <button
+                                  onClick={() => setActiveTool('eraser')}
+                                  disabled={isLoading || isEnhancing}
+                                  className={`p-3 rounded-md transition-colors duration-200 ${activeTool === 'eraser' ? 'bg-[var(--color-primary-500)] text-white' : 'bg-white/10 hover:bg-white/20 text-gray-300'}`}
+                                  aria-label="Select Eraser Tool"
+                                >
+                                  <EraserIcon className="w-6 h-6" />
+                                </button>
+                            </div>
+                            <button
+                                onClick={clearMask}
+                                disabled={isLoading || isEnhancing}
+                                className="w-auto text-center bg-white/10 border border-white/20 text-gray-200 font-semibold py-2 px-4 rounded-md transition-all duration-200 ease-in-out hover:bg-white/20 active:scale-95 text-base disabled:opacity-50"
+                              >
+                                {t('clearMask')}
+                            </button>
+                        </div>
+                        <MaskingToolbar 
+                            brushSize={brushSize}
+                            onBrushSizeChange={setBrushSize}
+                            isLoading={isLoading || isEnhancing}
+                        />
+                    </>
+                )}
+            </aside>
+        </>
+    );
+  }
+
+  const renderAppBody = () => {
+      if (page === 'about') return <AboutScreen />;
+      if (page === 'gallery') return <GalleryScreenLazy onClose={() => setPage('main')} userId={user?.uid} />;
+      if (page === 'settings') return <ProfileSettingsScreen onClose={() => setPage('main')} />;
+
+      if (!currentImage) {
+          return (
+            <>
+              <StartScreen onFileSelect={(files) => files && handleImageUpload(files[0])} />
+              {showWelcomeScreen && <BetaDisclaimer onAccept={handleAcceptWelcome} />}
+            </>
+          );
+      }
+      
+      return renderEditorContent();
+  }
   
   return (
-    <div className="min-h-screen text-gray-100 flex flex-col">
-      <Header onHomeClick={handleUploadNew} />
-      <main className={`flex-grow w-full max-w-[1600px] mx-auto p-4 md:p-8 flex justify-center ${currentImage ? 'items-start' : 'items-center'}`}>
-        {renderContent()}
-      </main>
+    <div className="min-h-screen flex flex-col bg-gray-900/50">
+        <Header 
+            onHomeClick={handleNewUpload} 
+            onAboutClick={() => setPage('about')}
+            onGalleryClick={() => setPage('gallery')}
+            onSettingsClick={() => setPage('settings')}
+            onLoginClick={() => setShowAuthScreen(true)}
+            isEditing={!!currentImage}
+        />
+
+        <main className={`flex-grow flex relative ${currentImage ? 'flex-col md:flex-row p-4 gap-4' : 'items-center justify-center p-4'}`}>
+            <Suspense fallback={<Spinner />}>
+                {renderAppBody()}
+            </Suspense>
+
+            {(isLoading || isEnhancing) && (
+                <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-40 animate-fade-in backdrop-blur-sm text-center p-4">
+                    <Spinner />
+                    <p className="text-lg font-semibold mt-4 text-gray-200">{isEnhancing ? 'Enhancing prompt...' : t('aiWorking')}</p>
+                    {isLoading && (
+                        <button
+                          onClick={handleCancelGeneration}
+                          className="mt-6 bg-white/10 px-4 py-2 text-sm font-semibold text-gray-200 rounded-md hover:bg-white/20 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                    )}
+                </div>
+            )}
+        </main>
+
+        <footer className="w-full py-3 px-4 sm:px-8 border-t border-gray-700 bg-gray-800/30 backdrop-blur-sm">
+            {(currentImage || logoInProgress) && page === 'main' ? (
+                <div className="flex flex-col items-center gap-3">
+                    <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                            {activeTab !== 'logoMaker' && (
+                                <>
+                                    <button onClick={handleUndo} disabled={!canUndo || isLoading || isEnhancing} className="flex items-center gap-2 bg-white/10 px-3 py-2 text-xs sm:text-sm font-semibold text-gray-200 rounded-md hover:bg-white/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{t('undo')}<UndoIcon className="w-5 h-5"/></button>
+                                    <button onClick={handleRedo} disabled={!canRedo || isLoading || isEnhancing} className="flex items-center gap-2 bg-white/10 px-3 py-2 text-xs sm:text-sm font-semibold text-gray-200 rounded-md hover:bg-white/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{t('redo')}<RedoIcon className="w-5 h-5"/></button>
+                                    <button onClick={handleReset} disabled={!canUndo || isLoading || isEnhancing} className="bg-white/10 px-3 py-2 text-xs sm:text-sm font-semibold text-gray-200 rounded-md hover:bg-white/20 transition-colors disabled:opacity-50">{t('reset')}</button>
+                                </>
+                            )}
+                        </div>
+                        
+                        <div className="flex items-center gap-2">
+                            <button onClick={handleNewUpload} className="bg-white/10 px-3 py-2 text-xs sm:text-sm font-semibold text-gray-200 rounded-md hover:bg-white/20 transition-colors">{t('startOver')}</button>
+                            <button
+                                onClick={handleSave}
+                                disabled={isLoading || isSaving || !user || user.isAnonymous || isEnhancing}
+                                className="flex items-center gap-2 bg-green-600 px-3 py-2 text-xs sm:text-sm font-bold text-white rounded-md hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-green-800"
+                                title={!user || user.isAnonymous ? "Please log in to save images" : "Save to your personal cloud storage"}
+                            >
+                                <CloudArrowUpIcon className="w-5 h-5" />
+                                {isSaving ? 'Saving...' : 'Save to Cloud'}
+                            </button>
+                            <button onClick={handleDownload} className="bg-[var(--color-primary-500)] px-3 py-2 text-xs sm:text-sm font-bold text-white rounded-md hover:bg-[var(--color-primary-600)] transition-colors">{t('downloadImage')}</button>
+                        </div>
+                    </div>
+                    <p className="text-xs text-gray-500 pt-2">2025 all reserved from G.B</p>
+                </div>
+            ) : (
+                <p className="text-center text-xs text-gray-500">2025 all reserved from G.B</p>
+            )}
+        </footer>
+        
+        <Assistant />
+
+        <Suspense fallback={<div className="fixed inset-0 bg-black/60 flex items-center justify-center"><Spinner /></div>}>
+            {showAuthScreen && <AuthScreen onClose={() => setShowAuthScreen(false)} />}
+        </Suspense>
     </div>
   );
 };

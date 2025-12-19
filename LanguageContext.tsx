@@ -16,6 +16,7 @@ interface LanguageContextType {
 }
 
 export const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
+export type { Language };
 
 interface LanguageProviderProps {
     children: ReactNode;
@@ -25,7 +26,9 @@ export const LanguageProvider: React.FC<LanguageProviderProps> = ({ children }) 
     const [language, setLanguage] = useState<Language>('en');
 
     const t = useCallback((key: TranslationKey, ...args: any[]): string => {
-        const string = translations[language][key] || translations['en'][key];
+        const langTranslations = translations[language] || translations['en'];
+        const string = langTranslations[key] || translations['en'][key];
+        
         // Simple argument replacement, e.g., t('key', 'value') replaces {0} with 'value'
         if (args.length > 0) {
             return string.replace(/\{(\d+)\}/g, (match, number) => {

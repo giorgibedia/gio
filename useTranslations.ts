@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import { useContext } from 'react';
-import { LanguageContext } from './LanguageContext';
+import { LanguageContext, Language } from './LanguageContext';
 
 export const useTranslations = () => {
     const context = useContext(LanguageContext);
@@ -12,3 +12,5 @@ export const useTranslations = () => {
     }
     return context;
 };
+
+export type { Language };
