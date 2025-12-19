@@ -11,9 +11,10 @@ import { ref, remove } from 'firebase/database';
 
 // Configuration for Intelligent Model Fallback
 // Using 2.5 Flash Image as primary. 
-// Fallback set to 2.0 Flash Exp which often has a separate quota bucket.
+// Fallback is set to the same model to provide a second round of retries on 429/503 errors.
+// NOTE: gemini-2.0-flash-exp caused 400 errors as it doesn't support image modalities.
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image';
-const FALLBACK_IMAGE_MODEL = 'gemini-2.0-flash-exp';
+const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -146,7 +147,7 @@ const generateWithFallback = async (
         const errString = error.toString();
         // If it's a 429 (High traffic) or 403 (Permission), try the fallback model.
         if (errString.includes('429') || errString.includes('High traffic') || errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND')) {
-            console.warn(`Primary model failed (${errString}). Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
+            console.warn(`Primary model failed (${errString}). Retrying with ${FALLBACK_IMAGE_MODEL}.`);
             
             return await retryOperation(() => ai.models.generateContent({
                 ...params,
