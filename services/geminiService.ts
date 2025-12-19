@@ -111,12 +111,12 @@ const retryOperation = async <T>(
                 let delay = getRetryDelay(error);
                 if (delay === 0) delay = initialDelay * Math.pow(2, i);
 
-                // UX IMPROVEMENT: If the API asks to wait more than 15 seconds, 
-                // it's better to fail fast and let the user try again later (or switch models)
-                // rather than freezing the app for a minute.
-                if (delay > 15000) {
+                // UX ADJUSTMENT: Increased limit from 15s to 60s.
+                // The free API tier often returns 429s with ~30-60s waits during high traffic.
+                // Waiting is better than failing immediately for the user.
+                if (delay > 60000) {
                     console.warn(`Wait time (${(delay/1000).toFixed(1)}s) is too long. Aborting retry to fallback.`);
-                    throw new Error(`High traffic: Server requested ${Math.round(delay/1000)}s wait. Please try again.`);
+                    throw new Error(`High traffic: Server requested ${Math.round(delay/1000)}s wait. Please try again later.`);
                 }
 
                 const waitTimeSec = (delay/1000).toFixed(1);
