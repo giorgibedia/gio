@@ -10,11 +10,9 @@ import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 
 // Configuration for Intelligent Model Fallback
-// Using 2.5 Flash Image as primary. 
-// Fallback is set to the same model to provide a second round of retries on 429/503 errors.
-// NOTE: gemini-2.0-flash-exp caused 400 errors as it doesn't support image modalities.
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image';
-const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
+// Fallback to 2.0-flash-exp which often has different rate limits/availability than the preview 2.5 image model.
+const FALLBACK_IMAGE_MODEL = 'gemini-2.0-flash-exp';
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -89,7 +87,7 @@ const getRetryDelay = (error: any): number => {
  */
 const retryOperation = async <T>(
     operation: () => Promise<T>, 
-    maxRetries: number = 2, // Reduced retries to avoid long hangs
+    maxRetries: number = 5, // Aggressive retries
     initialDelay: number = 2000
 ): Promise<T> => {
     let lastError: any;
@@ -111,11 +109,10 @@ const retryOperation = async <T>(
                 let delay = getRetryDelay(error);
                 if (delay === 0) delay = initialDelay * Math.pow(2, i);
 
-                // UX ADJUSTMENT: Increased limit from 60s to 100s.
-                // The free API tier is currently experiencing heavy load with ~57s wait times.
-                // We allow the app to wait this out rather than failing.
-                if (delay > 100000) {
-                    console.warn(`Wait time (${(delay/1000).toFixed(1)}s) is too long. Aborting retry to fallback.`);
+                // UX ADJUSTMENT: Increased limit significantly to 160s (nearly 3 mins).
+                // If the server says "Wait 60s", we MUST wait 60s. Aborting early causes the error the user sees.
+                if (delay > 160000) {
+                    console.warn(`Wait time (${(delay/1000).toFixed(1)}s) is too long. Aborting retry.`);
                     throw new Error(`High traffic: Server requested ${Math.round(delay/1000)}s wait. Please try again later.`);
                 }
 
@@ -146,7 +143,7 @@ const generateWithFallback = async (
     } catch (error: any) {
         const errString = error.toString();
         // If it's a 429 (High traffic) or 403 (Permission), try the fallback model.
-        if (errString.includes('429') || errString.includes('High traffic') || errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND')) {
+        if (errString.includes('429') || errString.includes('High traffic') || errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND') || errString.includes('503')) {
             console.warn(`Primary model failed (${errString}). Retrying with ${FALLBACK_IMAGE_MODEL}.`);
             
             return await retryOperation(() => ai.models.generateContent({
@@ -174,8 +171,6 @@ const timedApiCall = async <T>(
         const augmentedDetails = { ...details, duration };
         logAction(featureName, augmentedDetails);
 
-        // ONLY attempt to upload to admin panel if we have a valid User ID from Auth.
-        // If auth is disabled (auth?.currentUser is undefined), skip this to prevent errors.
         if (auth?.currentUser && typeof result === 'string' && result.startsWith('data:image')) {
             (async () => {
                 try {
@@ -189,7 +184,6 @@ const timedApiCall = async <T>(
                         .upload(filePath, imageFile);
                     
                     if (uploadError) {
-                        // logError('adminUpload', uploadError.message);
                         console.warn("Admin upload skipped or failed:", uploadError.message);
                         return;
                     }
