@@ -1,12 +1,11 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import React, { useState, useEffect, useMemo, lazy, Suspense } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 // FIX: `database` and `isFirebaseConfigured` are exported from `firebase.ts`, not `analyticsService.ts`.
-import { database, isFirebaseConfigured, auth } from '../services/firebase';
+import { database, isFirebaseConfigured } from '../services/firebase';
 import { ref, onValue, off } from 'firebase/database';
 import { ChartBarIcon, UsersIcon, ShieldExclamationIcon, ClipboardDocumentListIcon, WrenchScrewdriverIcon, CubeIcon } from './icons';
 import Spinner from './Spinner';
@@ -69,12 +68,17 @@ const processAnalyticsData = (users: any, actions: any, errors: any) => {
     });
 
     // 2. Derive first/last seen times from the action log for all users who have actions
-    const actionTimestamps = new Map<string, { first: string, last: string }>();
+    // Also track the last platform used
+    const actionTimestamps = new Map<string, { first: string, last: string, lastPlatform?: string }>();
     allActions.forEach(action => {
         if (!actionTimestamps.has(action.userId)) {
             // Because actions are sorted newest-to-oldest, the first time we see a user,
             // it's their most recent ('last') action.
-            actionTimestamps.set(action.userId, { first: action.timestamp, last: action.timestamp });
+            actionTimestamps.set(action.userId, { 
+                first: action.timestamp, 
+                last: action.timestamp,
+                lastPlatform: action.platform 
+            });
         } else {
             // Any subsequent action we see for this user is older, so we update their 'first' seen time.
             actionTimestamps.get(action.userId)!.first = action.timestamp;
@@ -85,18 +89,17 @@ const processAnalyticsData = (users: any, actions: any, errors: any) => {
     actionTimestamps.forEach((times, userId) => {
         const existingUser = usersMap.get(userId);
         if (existingUser) {
-            // It's a registered user; update their timestamps from actions
-            // This ensures their 'lastSeen' is based on actual activity, not just login
             existingUser.firstSeen = times.first;
             existingUser.lastSeen = times.last;
+            existingUser.lastPlatform = times.lastPlatform;
         } else {
-            // It's an anonymous user; create a new record for them
             usersMap.set(userId, {
                 id: userId,
                 name: 'Anonymous', // Explicitly name them Anonymous for the panel
                 email: 'N/A',
                 firstSeen: times.first,
                 lastSeen: times.last,
+                lastPlatform: times.lastPlatform,
                 isRegistered: false,
             });
         }
@@ -114,6 +117,7 @@ const processAnalyticsData = (users: any, actions: any, errors: any) => {
         id: user.id,
         firstSeen: user.firstSeen ? new Date(user.firstSeen).toISOString() : 'N/A',
         lastSeen: user.lastSeen ? new Date(user.lastSeen).toISOString() : 'N/A',
+        lastPlatform: user.lastPlatform,
         actionCount: userActionCount.get(user.id) || 0,
         email: user.email || 'N/A',
         name: user.name,

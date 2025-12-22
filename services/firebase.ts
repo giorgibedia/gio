@@ -4,9 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import { initializeApp, FirebaseApp } from "firebase/app";
-import { getAuth, Auth } from "firebase/auth";
-import { getDatabase, Database } from "firebase/database";
+import { initializeApp } from "firebase/app";
+import type { FirebaseApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
+import type { Auth } from "firebase/auth";
+import { getDatabase } from "firebase/database";
+import type { Database } from "firebase/database";
 
 // Configuration for Firebase project: pixai-app-f7405
 const firebaseConfig = {

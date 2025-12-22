@@ -4,7 +4,6 @@
 */
 import React, { createContext, useState, useEffect, useContext, ReactNode } from 'react';
 import { 
-    User, 
     onAuthStateChanged, 
     GoogleAuthProvider, 
     signInWithPopup, 
@@ -14,6 +13,7 @@ import {
     updateProfile,
     deleteUser
 } from 'firebase/auth';
+import type { User } from 'firebase/auth';
 import { auth, database } from './services/firebase';
 import { ref, set, update, serverTimestamp, get, remove } from 'firebase/database';
 // FIX: Import functions needed for account data management
