@@ -61,32 +61,15 @@ export const getUserId = (): string => {
 export const init = async () => {
     if (!isFirebaseConfigured || !database || !auth) return;
 
-    // Fix for PERMISSION_DENIED and 403 Errors on Vercel:
+    // Fix for PERMISSION_DENIED:
     // If no user is signed in, try sign in anonymously.
     if (!auth.currentUser) {
         try {
             await signInAnonymously(auth);
-        } catch (error: any) {
-            // DETAILED ERROR LOGGING FOR VERCEL DEBUGGING
-            const errCode = error.code || '';
-            const errMessage = error.message || '';
-            
-            if (errCode === 'auth/operation-not-allowed') {
-                 console.warn("⚠️ Firebase Warning: Anonymous Auth is disabled in Firebase Console. Enable it in Build -> Authentication -> Sign-in method.");
-            } else if (errCode === 'auth/unauthorized-domain' || errMessage.includes('403') || errMessage.includes('unauthorized')) {
-                 console.error(
-                    "%c🚨 DOMAIN CONFIGURATION ERROR 🚨", 
-                    "background: red; color: white; font-size: 16px; font-weight: bold; padding: 4px;"
-                 );
-                 console.error(
-                    "Your Vercel domain is NOT authorized in Firebase.\n" +
-                    "1. Go to Firebase Console (https://console.firebase.google.com)\n" +
-                    "2. Go to Authentication -> Settings -> Authorized Domains\n" +
-                    "3. Add your Vercel domain (e.g., 'your-app.vercel.app')"
-                 );
-            } else {
-                console.warn("Silent Auth failed (non-critical):", error);
-            }
+        } catch (error) {
+            // If anonymous auth is disabled in console, this will fail.
+            // We proceed anyway, but database writes might fail if rules require auth.
+            // Silently ignoring detailed logs here to avoid console spam if feature is off
         }
     }
 

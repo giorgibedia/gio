@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -7,39 +8,35 @@ import { initializeApp, FirebaseApp } from "firebase/app";
 import { getAuth, Auth } from "firebase/auth";
 import { getDatabase, Database } from "firebase/database";
 
-// Your web app's Firebase configuration from user prompt
+// Configuration for Firebase project: pixai-app-f7405
 const firebaseConfig = {
-  apiKey: "AIzaSyAlxwqP5mywXvsBig0WwsvLgyf8ijbspyo",
-  authDomain: "photo-edit-ai.firebaseapp.com",
-  databaseURL: "https://photo-edit-ai-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "photo-edit-ai",
-  storageBucket: "photo-edit-ai.firebasestorage.app",
-  messagingSenderId: "385350236173",
-  appId: "1:385350236173:web:6305f5f6c41c205a8cfd44",
-  measurementId: "G-NGV0TDZF0Y"
+  apiKey: "AIzaSyAOXp0jHSLG-BQV6W7QJ4BnsDmWQVRlRwI",
+  authDomain: "pixai-app-f7405.firebaseapp.com",
+  databaseURL: "https://pixai-app-f7405-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "pixai-app-f7405",
+  storageBucket: "pixai-app-f7405.firebasestorage.app",
+  messagingSenderId: "928412691662",
+  appId: "1:928412691662:web:cb222365597f6d1848349f",
+  measurementId: "G-NJ466ZETWZ"
 };
 
 let app: FirebaseApp | undefined;
 let database: Database | undefined;
 let auth: Auth | undefined;
 
-// --- FIREBASE TEMPORARILY DISABLED FOR VERCEL STABILITY ---
-// To re-enable: Change this to `true`
-const ENABLE_FIREBASE = false; 
-
-export const isFirebaseConfigured = ENABLE_FIREBASE && !!(firebaseConfig.apiKey && firebaseConfig.databaseURL);
+// შემოწმება, არის თუ არა კონფიგურაცია ვალიდური
+export const isFirebaseConfigured = !!firebaseConfig.apiKey;
 
 if (isFirebaseConfigured) {
     try {
         app = initializeApp(firebaseConfig);
         database = getDatabase(app);
         auth = getAuth(app);
-        console.log("Firebase initialized successfully");
     } catch (e) {
         console.error("Firebase initialization error:", e);
     }
 } else {
-    console.warn("Firebase is temporarily disabled in code.");
+    console.warn("Firebase is not configured yet.");
 }
 
 export { database, auth };

@@ -11,8 +11,7 @@ import { ref, remove } from 'firebase/database';
 
 // Configuration for Intelligent Model Fallback
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image';
-// Fallback to 2.0-flash-exp which often has different rate limits/availability than the preview 2.5 image model.
-const FALLBACK_IMAGE_MODEL = 'gemini-2.0-flash-exp';
+const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -76,8 +75,8 @@ const getRetryDelay = (error: any): number => {
     if (match && match[1]) {
         const seconds = parseFloat(match[1]);
         console.log(`Detected API requested wait time: ${seconds}s`);
-        // Add a small buffer
-        return Math.ceil(seconds * 1000) + 1000;
+        // Reduced buffer from 2000ms to 500ms to be faster
+        return Math.ceil(seconds * 1000) + 500;
     }
     return 0;
 };
@@ -87,7 +86,7 @@ const getRetryDelay = (error: any): number => {
  */
 const retryOperation = async <T>(
     operation: () => Promise<T>, 
-    maxRetries: number = 5, // Aggressive retries
+    maxRetries: number = 5, 
     initialDelay: number = 2000
 ): Promise<T> => {
     let lastError: any;
@@ -109,15 +108,15 @@ const retryOperation = async <T>(
                 let delay = getRetryDelay(error);
                 if (delay === 0) delay = initialDelay * Math.pow(2, i);
 
-                // UX ADJUSTMENT: Increased limit significantly to 160s (nearly 3 mins).
-                // If the server says "Wait 60s", we MUST wait 60s. Aborting early causes the error the user sees.
-                if (delay > 160000) {
-                    console.warn(`Wait time (${(delay/1000).toFixed(1)}s) is too long. Aborting retry.`);
-                    throw new Error(`High traffic: Server requested ${Math.round(delay/1000)}s wait. Please try again later.`);
-                }
-
                 const waitTimeSec = (delay/1000).toFixed(1);
                 console.warn(`API Rate Limit hit. Waiting ${waitTimeSec}s before attempt ${i + 2}/${maxRetries + 1}...`);
+                
+                // UX Hack: If wait time is extremely long (e.g. > 20s), notify the user via console/alert so they don't think it froze.
+                // We use setTimeout to not block the thread immediately.
+                if (delay > 20000) {
+                    console.log(`%c NOTE: High traffic. AI requires a ${waitTimeSec}s cooldown.`, 'background: #222; color: #bada55; font-size:14px');
+                }
+
                 await wait(delay);
                 continue;
             }
@@ -142,10 +141,8 @@ const generateWithFallback = async (
         }));
     } catch (error: any) {
         const errString = error.toString();
-        // If it's a 429 (High traffic) or 403 (Permission), try the fallback model.
-        if (errString.includes('429') || errString.includes('High traffic') || errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND') || errString.includes('503')) {
-            console.warn(`Primary model failed (${errString}). Retrying with ${FALLBACK_IMAGE_MODEL}.`);
-            
+        if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND')) {
+            console.warn(`Primary model failed. Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
             return await retryOperation(() => ai.models.generateContent({
                 ...params,
                 model: FALLBACK_IMAGE_MODEL
@@ -171,7 +168,7 @@ const timedApiCall = async <T>(
         const augmentedDetails = { ...details, duration };
         logAction(featureName, augmentedDetails);
 
-        if (auth?.currentUser && typeof result === 'string' && result.startsWith('data:image')) {
+        if (typeof result === 'string' && result.startsWith('data:image')) {
             (async () => {
                 try {
                     const userId = getUserId();
@@ -184,7 +181,7 @@ const timedApiCall = async <T>(
                         .upload(filePath, imageFile);
                     
                     if (uploadError) {
-                        console.warn("Admin upload skipped or failed:", uploadError.message);
+                        logError('adminUpload', uploadError.message);
                         return;
                     }
 
@@ -395,9 +392,8 @@ export const enhancePrompt = async (
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
         }
         
-        // SWITCH to 1.5-flash for text tasks to save 2.5-image quota and ensure speed.
         const response = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
-            model: 'gemini-1.5-flash', 
+            model: 'gemini-2.5-flash-preview', 
             contents: { parts: parts },
             config: { systemInstruction: systemInstruction },
         }));
@@ -416,12 +412,8 @@ export interface SupabaseStoredImage {
 }
 
 export const saveImageToGallery = async (imageFile: File): Promise<void> => {
-    // FIX: Check if auth and auth.currentUser exist before accessing uid
-    if (!auth || !auth.currentUser) {
-        throw new Error("Cloud storage is temporarily unavailable (Maintenance).");
-    }
-    const userId = auth.currentUser.uid;
-    
+    const userId = auth.currentUser?.uid;
+    if (!userId) throw new Error("User not authenticated.");
     const filePath = `${userId}/${imageFile.name}`;
     const { error } = await supabase.storage.from('gallery-images').upload(filePath, imageFile);
     if (error) throw new Error(error.message);
