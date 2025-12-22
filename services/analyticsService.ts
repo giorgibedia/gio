@@ -7,7 +7,7 @@
 import { database, isFirebaseConfigured, auth } from './firebase';
 import { ref, push, serverTimestamp, update } from 'firebase/database';
 import { isMobileApp } from './geminiService'; // Import detection logic
-import { signInAnonymously } from 'firebase/auth';
+import * as firebaseAuth from 'firebase/auth';
 
 // Interfaces for data structures
 interface UserData {
@@ -65,7 +65,7 @@ export const init = async () => {
     // If no user is signed in, try sign in anonymously.
     if (!auth.currentUser) {
         try {
-            await signInAnonymously(auth);
+            await firebaseAuth.signInAnonymously(auth);
         } catch (error) {
             // If anonymous auth is disabled in console, this will fail.
             // We proceed anyway, but database writes might fail if rules require auth.
@@ -86,8 +86,12 @@ export const logAction = (feature: string, details?: Record<string, any>) => {
     // We allow logging for everyone (including anonymous).
     // The database rules must be set to ".write": "auth != null" (if using Anon Auth) or ".write": true (insecure).
     
+    // Capture these locally to satisfy TypeScript in the promise callback
+    const db = database; 
+    const authInstance = auth;
+
     const currentUserId = getUserId();
-    const actionsRef = ref(database, 'actions');
+    const actionsRef = ref(db, 'actions');
     
     // Detect platform using the centralized logic
     const platform = isMobileApp() ? 'mobile_app' : 'web';
@@ -103,8 +107,8 @@ export const logAction = (feature: string, details?: Record<string, any>) => {
     push(actionsRef, newAction)
         .then(() => {
             // Only update user stats if we have a valid UID from Firebase or if we are logging anonymously
-            const userRef = ref(database, `users/${currentUserId}`);
-            const isAnon = !auth.currentUser || auth.currentUser.isAnonymous;
+            const userRef = ref(db, `users/${currentUserId}`);
+            const isAnon = !authInstance.currentUser || authInstance.currentUser.isAnonymous;
             
             const userUpdate: any = { 
                 lastSeen: serverTimestamp() 
@@ -133,8 +137,11 @@ export const logAction = (feature: string, details?: Record<string, any>) => {
 export const logError = (feature: string, message: string) => {
     if (!isFirebaseConfigured || !database || !auth) return;
 
+    // Capture locally
+    const db = database;
+
     const currentUserId = getUserId();
-    const errorsRef = ref(database, 'errors');
+    const errorsRef = ref(db, 'errors');
     const newError: AppError = {
         userId: currentUserId,
         feature: feature,

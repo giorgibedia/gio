@@ -4,10 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import { initializeApp } from "firebase/app";
-import type { FirebaseApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
-import type { Auth } from "firebase/auth";
+import * as firebaseApp from "firebase/app";
+import * as firebaseAuth from "firebase/auth";
 import { getDatabase } from "firebase/database";
 import type { Database } from "firebase/database";
 
@@ -23,18 +21,18 @@ const firebaseConfig = {
   measurementId: "G-NJ466ZETWZ"
 };
 
-let app: FirebaseApp | undefined;
+let app: firebaseApp.FirebaseApp | undefined;
 let database: Database | undefined;
-let auth: Auth | undefined;
+let auth: firebaseAuth.Auth | undefined;
 
 // შემოწმება, არის თუ არა კონფიგურაცია ვალიდური
 export const isFirebaseConfigured = !!firebaseConfig.apiKey;
 
 if (isFirebaseConfigured) {
     try {
-        app = initializeApp(firebaseConfig);
+        app = firebaseApp.initializeApp(firebaseConfig);
         database = getDatabase(app);
-        auth = getAuth(app);
+        auth = firebaseAuth.getAuth(app);
     } catch (e) {
         console.error("Firebase initialization error:", e);
     }

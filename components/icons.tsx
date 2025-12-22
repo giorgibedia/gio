@@ -5,7 +5,10 @@
 
 import React from 'react';
 
-type IconProps = React.SVGProps<SVGSVGElement>;
+// Extend SVGProps to explicitly allow 'title' and other standard SVG attributes
+interface IconProps extends React.SVGProps<SVGSVGElement> {
+    title?: string;
+}
 
 export const UploadIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <svg xmlns="http://www.w3.org/2000/svg" className={className} {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

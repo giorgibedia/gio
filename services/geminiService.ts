@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -412,6 +413,7 @@ export interface SupabaseStoredImage {
 }
 
 export const saveImageToGallery = async (imageFile: File): Promise<void> => {
+    if (!auth) throw new Error("Firebase Auth not initialized.");
     const userId = auth.currentUser?.uid;
     if (!userId) throw new Error("User not authenticated.");
     const filePath = `${userId}/${imageFile.name}`;

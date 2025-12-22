@@ -1,19 +1,10 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
 import React, { createContext, useState, useEffect, useContext, ReactNode } from 'react';
-import { 
-    onAuthStateChanged, 
-    GoogleAuthProvider, 
-    signInWithPopup, 
-    createUserWithEmailAndPassword, 
-    signInWithEmailAndPassword, 
-    signOut,
-    updateProfile,
-    deleteUser
-} from 'firebase/auth';
-import type { User } from 'firebase/auth';
+import * as firebaseAuth from 'firebase/auth';
 import { auth, database } from './services/firebase';
 import { ref, set, update, serverTimestamp, get, remove } from 'firebase/database';
 // FIX: Import functions needed for account data management
@@ -21,7 +12,7 @@ import { getImagesFromGallery, deleteImageFromGallery } from './services/geminiS
 
 
 interface AuthContextType {
-    user: User | null;
+    user: firebaseAuth.User | null;
     loading: boolean;
     signInWithGoogle: () => Promise<void>;
     signUpWithEmail: (email: string, password: string) => Promise<void>;
@@ -35,7 +26,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-    const [user, setUser] = useState<User | null>(null);
+    const [user, setUser] = useState<firebaseAuth.User | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -43,7 +34,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setLoading(false);
             return;
         }
-        const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+        const unsubscribe = firebaseAuth.onAuthStateChanged(auth, async (currentUser) => {
             // We now keep the currentUser even if anonymous, so AnalyticsService can use the UID.
             // The UI components (Header, App) will check 'user.isAnonymous' to decide what to show.
             setUser(currentUser);
@@ -82,30 +73,30 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const signInWithGoogle = async () => {
         if (!auth) throw new Error("Firebase Auth not initialized.");
-        const provider = new GoogleAuthProvider();
-        await signInWithPopup(auth, provider);
+        const provider = new firebaseAuth.GoogleAuthProvider();
+        await firebaseAuth.signInWithPopup(auth, provider);
     };
 
     const signUpWithEmail = async (email: string, password: string) => {
         if (!auth) throw new Error("Firebase Auth not initialized.");
-        await createUserWithEmailAndPassword(auth, email, password);
+        await firebaseAuth.createUserWithEmailAndPassword(auth, email, password);
     };
 
     const signInWithEmail = async (email: string, password: string) => {
         if (!auth) throw new Error("Firebase Auth not initialized.");
-        await signInWithEmailAndPassword(auth, email, password);
+        await firebaseAuth.signInWithEmailAndPassword(auth, email, password);
     };
 
     const logout = async () => {
         if (!auth) throw new Error("Firebase Auth not initialized.");
-        await signOut(auth);
+        await firebaseAuth.signOut(auth);
     };
 
     // FIX: Implement the method to update a user's display name.
     const updateDisplayName = async (name: string) => {
         if (!auth?.currentUser) throw new Error("Not authenticated.");
         
-        await updateProfile(auth.currentUser, { displayName: name });
+        await firebaseAuth.updateProfile(auth.currentUser, { displayName: name });
         
         if (database) {
             const userRef = ref(database, `users/${auth.currentUser.uid}`);
@@ -137,7 +128,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             await remove(userRef);
 
             // 3. Delete Auth user
-            await deleteUser(userToDelete);
+            await firebaseAuth.deleteUser(userToDelete);
             
         } catch (error) {
             console.error("Error during account deletion process:", error);
