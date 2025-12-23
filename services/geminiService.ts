@@ -12,9 +12,8 @@ import { ref, remove } from 'firebase/database';
 
 // Configuration for Intelligent Model Fallback
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image';
-// User requested to keep 2.5, so using the same model as fallback or just retrying.
-// In practice, retrying the same model later can work if the rate limit resets.
-const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
+// Keeping a different model family as fallback to utilize different quota buckets
+const FALLBACK_IMAGE_MODEL = 'gemini-3-pro-image-preview';
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -82,8 +81,8 @@ const getRetryDelay = (error: any): number => {
  */
 const retryOperation = async <T>(
     operation: () => Promise<T>, 
-    maxRetries: number = 5, // Increased retries to ensure success during high traffic
-    initialDelay: number = 2000
+    maxRetries: number = 2, // Reduced from 5 to prevent long waits
+    initialDelay: number = 1000
 ): Promise<T> => {
     let lastError: any;
     
@@ -104,12 +103,12 @@ const retryOperation = async <T>(
                 let delay = getRetryDelay(error);
                 if (delay === 0) delay = initialDelay * Math.pow(2, i);
 
-                // UX UPDATE: Google API is currently very busy and often asks for 40-60s waits.
-                // We now allow up to 70s wait to ensure success instead of failing.
-                if (delay > 70000) {
+                // UX UPDATE: If API requests a long wait (e.g. > 10s), abort immediately 
+                // to prevent the UI from spinning for minutes.
+                if (delay > 10000) {
                     const waitTimeSec = Math.ceil(delay / 1000);
                     console.warn(`Wait time (${waitTimeSec}s) too long. Aborting.`);
-                    throw new Error(`Server is very busy. Please try again in ${Math.round(waitTimeSec/60)} minutes.`);
+                    throw new Error(`System is busy (High Traffic). Please try again in ${waitTimeSec} seconds.`);
                 }
 
                 const waitTimeSec = (delay/1000).toFixed(1);
