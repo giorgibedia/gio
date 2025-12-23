@@ -83,6 +83,10 @@ export const init = async () => {
 export const logAction = (feature: string, details?: Record<string, any>) => {
     if (!isFirebaseConfigured || !database || !auth) return;
     
+    // FIX: If the user is not authenticated, do not attempt to write to the database.
+    // This prevents "FIREBASE WARNING: permission_denied" console noise if Anonymous Auth is disabled.
+    if (!auth.currentUser) return;
+    
     // We allow logging for everyone (including anonymous).
     // The database rules must be set to ".write": "auth != null" (if using Anon Auth) or ".write": true (insecure).
     
@@ -136,6 +140,9 @@ export const logAction = (feature: string, details?: Record<string, any>) => {
 
 export const logError = (feature: string, message: string) => {
     if (!isFirebaseConfigured || !database || !auth) return;
+
+    // FIX: If the user is not authenticated, do not attempt to write to the database.
+    if (!auth.currentUser) return;
 
     // Capture locally
     const db = database;
