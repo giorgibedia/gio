@@ -36,15 +36,7 @@ export const isMobileApp = (): boolean => {
  * A robust way to get the Gemini AI client.
  */
 const getAiClient = (): GoogleGenAI => {
-    let apiKey: string | undefined;
-    const providedKey = "AIzaSyAlxwqP5mywXvsBig0WwsvLgyf8ijbspyo";
-
-    if (isMobileApp()) {
-      apiKey = providedKey;
-      console.log("Mobile App/APK Environment detected. Using embedded API Key.");
-    } else {
-      apiKey = process.env.API_KEY || providedKey;
-    }
+    const apiKey = process.env.API_KEY;
 
     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
         const errorMessage = "API Key is not configured. Please reload.";
