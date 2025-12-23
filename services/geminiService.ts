@@ -1,4 +1,3 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -14,6 +13,31 @@ import { ref, remove } from 'firebase/database';
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image';
 // Keeping a different model family as fallback to utilize different quota buckets
 const FALLBACK_IMAGE_MODEL = 'gemini-3-pro-image-preview';
+
+// --- API KEY MANAGEMENT ---
+// Add multiple keys here to distribute the load.
+// If one hits the limit, the system will automatically try the next one.
+const SYSTEM_API_KEYS = [
+    "AIzaSyBOcKmBHgqodJkATv4xoEqWTx1ZLB6SgDU", 
+    // "ADD_SECOND_KEY_HERE", // Optional: Add a backup key here
+];
+
+let currentKeyIndex = 0;
+
+const rotateKey = () => {
+    currentKeyIndex = (currentKeyIndex + 1) % SYSTEM_API_KEYS.length;
+    console.log(`🔄 Switching system API Key to index: ${currentKeyIndex}`);
+};
+
+const getActiveKey = (): string => {
+    // 1. Priority: Check if user has entered a custom key in Settings
+    const customKey = typeof localStorage !== 'undefined' ? localStorage.getItem('pixai_custom_api_key') : null;
+    if (customKey && customKey.trim().length > 10) {
+        return customKey.trim();
+    }
+    // 2. Fallback: Use system keys with rotation
+    return SYSTEM_API_KEYS[currentKeyIndex];
+};
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -34,11 +58,10 @@ export const isMobileApp = (): boolean => {
 };
 
 /**
- * A robust way to get the Gemini AI client.
+ * A robust way to get the Gemini AI client using the active key.
  */
 const getAiClient = (): GoogleGenAI => {
-    // Hardcoded API Key to ensure it works in production without env var issues
-    const apiKey = "AIzaSyBOcKmBHgqodJkATv4xoEqWTx1ZLB6SgDU";
+    const apiKey = getActiveKey();
 
     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
         const errorMessage = "API Key is not configured. Please reload.";
@@ -69,26 +92,26 @@ const getRetryDelay = (error: any): number => {
                   
     if (match && match[1]) {
         const seconds = parseFloat(match[1]);
-        console.log(`Detected API requested wait time: ${seconds}s`);
-        // Add a small buffer
         return Math.ceil(seconds * 1000) + 1000;
     }
     return 0;
 };
 
 /**
- * Wraps an async operation with robust retry logic.
+ * Wraps an async operation with robust retry logic AND key rotation.
  */
 const retryOperation = async <T>(
-    operation: () => Promise<T>, 
-    maxRetries: number = 2, // Reduced from 5 to prevent long waits
+    operation: (aiClient: GoogleGenAI) => Promise<T>, 
+    maxRetries: number = 3,
     initialDelay: number = 1000
 ): Promise<T> => {
     let lastError: any;
     
     for (let i = 0; i <= maxRetries; i++) {
         try {
-            return await operation();
+            // Get a fresh client (potentially with a new key) each attempt
+            const ai = getAiClient();
+            return await operation(ai);
         } catch (error: any) {
             lastError = error;
             let errString = "";
@@ -99,21 +122,29 @@ const retryOperation = async <T>(
             const isRateLimit = errString.includes('429') || errString.includes('RESOURCE_EXHAUSTED') || errString.includes('quota');
             const isServerOverload = errString.includes('503') || errString.includes('Overloaded');
 
+            if (isRateLimit) {
+                // IMPORTANT: If it's a rate limit, ROTATE the key immediately!
+                // Only rotate if we are NOT using a custom user key (users only have 1 key usually)
+                if (!localStorage.getItem('pixai_custom_api_key')) {
+                    rotateKey(); 
+                    console.warn(`Rate limit hit. Rotating key and retrying immediately...`);
+                    // Don't wait long if we switched keys, just a small buffer
+                    await wait(500);
+                    continue; 
+                }
+            }
+
             if ((isRateLimit || isServerOverload) && i < maxRetries) {
                 let delay = getRetryDelay(error);
                 if (delay === 0) delay = initialDelay * Math.pow(2, i);
 
-                // UX UPDATE: If API requests a long wait (e.g. > 10s), abort immediately 
-                // to prevent the UI from spinning for minutes.
-                if (delay > 10000) {
-                    const waitTimeSec = Math.ceil(delay / 1000);
-                    console.warn(`Wait time (${waitTimeSec}s) too long. Aborting.`);
-                    throw new Error(`System is busy (High Traffic). Please try again in ${waitTimeSec} seconds.`);
+                // If delay is huge (>15s), and we have no other keys, fail fast to avoid spinner hell.
+                if (delay > 15000 && i > 0) {
+                     const waitTimeSec = Math.ceil(delay / 1000);
+                     throw new Error(`Traffic is high. Please try again in ${waitTimeSec} seconds or add your own API Key in Settings.`);
                 }
 
-                const waitTimeSec = (delay/1000).toFixed(1);
-                console.log(`%c ⏳ API Busy. Waiting ${waitTimeSec}s automatically...`, 'color: orange; font-weight: bold;');
-                
+                console.log(`%c ⏳ API Busy. Waiting ${(delay/1000).toFixed(1)}s...`, 'color: orange;');
                 await wait(delay);
                 continue;
             }
@@ -127,21 +158,21 @@ const retryOperation = async <T>(
  * Executes a generation request with a fallback mechanism and retry logic.
  */
 const generateWithFallback = async (
-    ai: GoogleGenAI, 
     params: any
 ): Promise<GenerateContentResponse> => {
     try {
         console.log(`Attempting generation with ${PRIMARY_IMAGE_MODEL}...`);
-        return await retryOperation(() => ai.models.generateContent({
+        // We pass a function that takes 'ai' so retryOperation can inject the (possibly rotated) client
+        return await retryOperation((ai) => ai.models.generateContent({
             ...params,
             model: PRIMARY_IMAGE_MODEL
         }));
     } catch (error: any) {
         const errString = error.toString();
-        // If it's a permission/not found error OR a Rate Limit (429), try the fallback model
-        if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND') || errString.includes('429') || errString.includes('High traffic') || errString.includes('Server is very busy')) {
-            console.warn(`Primary model failed (${errString}). Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
-            return await retryOperation(() => ai.models.generateContent({
+        // If it's a permission/not found error OR a hard Rate Limit (429) that key rotation didn't fix
+        if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND') || errString.includes('429')) {
+            console.warn(`Primary model/key failed (${errString}). Switching model to ${FALLBACK_IMAGE_MODEL}.`);
+            return await retryOperation((ai) => ai.models.generateContent({
                 ...params,
                 model: FALLBACK_IMAGE_MODEL
             }));
@@ -264,13 +295,12 @@ export const generateEditedImage = async (
     maskImage: File,
 ): Promise<string> => {
     return timedApiCall('retouch', { prompt: userPrompt }, async () => {
-        const ai = getAiClient();
         const originalImagePart = dataUrlToPart(originalImage);
         const maskImagePart = await fileToPart(maskImage);
         const systemPrompt = `You are a precision digital artist. Edit the image based on the prompt ONLY in the white areas of the mask. The black areas of the mask must remain completely untouched. The edit must be seamless and hyper-realistic.`;
         const prompt = `${systemPrompt}\n\nUser's request: "${userPrompt}"`;
 
-        const response = await generateWithFallback(ai, {
+        const response = await generateWithFallback({
             contents: { parts: [originalImagePart, maskImagePart, { text: prompt }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
@@ -284,12 +314,11 @@ export const generateBackgroundAlteredImage = async (
     alterationPrompt: string,
 ): Promise<string> => {
     return timedApiCall('background', { prompt: alterationPrompt }, async () => {
-        const ai = getAiClient();
         const systemPrompt = `Isolate the main subject and replace the background. Subject must be preserved perfectly. The new background should realistically match the subject's lighting and perspective.`;
         const finalPrompt = `${systemPrompt}\n\nUser's request: "${alterationPrompt}"`;
         const originalImagePart = dataUrlToPart(originalImage);
 
-        const response = await generateWithFallback(ai, {
+        const response = await generateWithFallback({
             contents: { parts: [originalImagePart, { text: finalPrompt }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
@@ -309,8 +338,7 @@ export const generateImageFromText = async (
     prompt: string,
 ): Promise<string> => {
     return timedApiCall('generateImage', { prompt }, async () => {
-        const ai = getAiClient();
-        const response = await generateWithFallback(ai, {
+        const response = await generateWithFallback({
             contents: { parts: [{ text: prompt }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
@@ -324,7 +352,6 @@ export const generateLogo = async (
     backgroundImageDataUrl?: string | null,
 ): Promise<string> => {
     return timedApiCall('generateLogo', { prompt: userPrompt }, async () => {
-        const ai = getAiClient();
         let systemPrompt = !existingLogoDataUrl && !backgroundImageDataUrl 
             ? `You are a professional logo designer AI. Create a unique, high-quality logo based on the user's description. Focus on symbolic iconography.`
             : `You are a professional logo designer AI. Modify the existing logo or place a new logo on the provided background based on the user's description.`;
@@ -335,7 +362,7 @@ export const generateLogo = async (
         if (backgroundImageDataUrl) parts.unshift(dataUrlToPart(backgroundImageDataUrl));
         else if (existingLogoDataUrl) parts.unshift(dataUrlToPart(existingLogoDataUrl));
 
-        const response = await generateWithFallback(ai, {
+        const response = await generateWithFallback({
             contents: { parts: parts },
             config: { responseModalities: [Modality.IMAGE] },
         });
@@ -349,9 +376,8 @@ export const generateMagicEdit = async (
     userPrompt: string,
 ): Promise<string> => {
     return timedApiCall('magicEdit', { prompt: userPrompt }, async () => {
-        const ai = getAiClient();
         const originalImagePart = dataUrlToPart(originalImage);
-        const response = await generateWithFallback(ai, {
+        const response = await generateWithFallback({
             contents: { parts: [originalImagePart, { text: userPrompt }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
@@ -365,10 +391,9 @@ export const composeImages = async (
     userPrompt: string,
 ): Promise<string> => {
     return timedApiCall('composeImages', { prompt: userPrompt }, async () => {
-        const ai = getAiClient();
         const originalImagePart = dataUrlToPart(originalImage);
         const secondImagePart = dataUrlToPart(secondImage);
-        const response = await generateWithFallback(ai, {
+        const response = await generateWithFallback({
             contents: { parts: [originalImagePart, secondImagePart, { text: userPrompt }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
@@ -381,7 +406,6 @@ export const enhancePrompt = async (
     image?: string | null,
 ): Promise<string> => {
     return timedApiCall('enhancePrompt', { prompt: userPrompt, hasImage: !!image }, async () => {
-        const ai = getAiClient();
         const parts: any[] = [{ text: userPrompt }];
         let systemInstruction = `You are a prompt engineering expert. Expand the user's brief idea into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
 
@@ -390,7 +414,7 @@ export const enhancePrompt = async (
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
         }
         
-        const response = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
+        const response = await retryOperation<GenerateContentResponse>((ai) => ai.models.generateContent({
             model: 'gemini-2.5-flash-preview', 
             contents: { parts: parts },
             config: { systemInstruction: systemInstruction },

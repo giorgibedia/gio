@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -7,7 +8,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../AuthContext';
 import { useTranslations } from '../useTranslations';
 // FIX: Import the newly added PaintBrushIcon.
-import { UserCircleIcon, PaintBrushIcon, ShieldExclamationIcon, ChevronLeftIcon, CheckCircleIcon } from './icons';
+import { UserCircleIcon, PaintBrushIcon, ShieldExclamationIcon, ChevronLeftIcon, CheckCircleIcon, CommandLineIcon } from './icons';
 
 interface ProfileSettingsScreenProps {
     onClose: () => void;
@@ -26,10 +27,14 @@ const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({ onClose }
     const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
     const [activeTheme, setActiveTheme] = useState('blue');
+    const [customApiKey, setCustomApiKey] = useState('');
 
     useEffect(() => {
         const savedTheme = localStorage.getItem('appTheme') || 'blue';
         setActiveTheme(savedTheme);
+        
+        const savedKey = localStorage.getItem('pixai_custom_api_key') || '';
+        setCustomApiKey(savedKey);
     }, []);
     
     const themes = [
@@ -46,6 +51,11 @@ const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({ onClose }
         localStorage.setItem('appTheme', themeName);
         document.documentElement.setAttribute('data-theme', themeName);
         setActiveTheme(themeName);
+    };
+
+    const handleApiKeySave = () => {
+        localStorage.setItem('pixai_custom_api_key', customApiKey.trim());
+        alert("API Key saved! The app will now use your key.");
     };
 
     const handleNameUpdate = async (e: React.FormEvent) => {
@@ -115,6 +125,34 @@ const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({ onClose }
                     </div>
                 </section>
                 
+                {/* Custom API Key Section (Fixes 429 Errors) */}
+                <section className="bg-gray-800/50 border border-gray-700 p-6 rounded-2xl">
+                     <div className="flex items-center gap-3 mb-4">
+                        <CommandLineIcon className="w-6 h-6 text-yellow-400" />
+                        <h2 className="text-xl font-bold text-white">Custom API Key (Advanced)</h2>
+                    </div>
+                    <p className="text-sm text-gray-400 mb-4">
+                        If you are experiencing "System Busy" or "429" errors, enter your own Google Gemini API Key here. This bypasses the shared limit.
+                        <br/>
+                        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-[var(--color-primary-400)] hover:underline">Get a free key here</a>.
+                    </p>
+                    <div className="flex gap-2">
+                        <input
+                            type="password"
+                            value={customApiKey}
+                            onChange={(e) => setCustomApiKey(e.target.value)}
+                            placeholder="AIzaSy..."
+                            className="flex-grow bg-gray-800 border border-gray-600 text-gray-200 rounded-lg p-3 focus:ring-2 focus:ring-[var(--color-primary-500)] focus:outline-none transition w-full font-mono text-sm"
+                        />
+                        <button
+                            onClick={handleApiKeySave}
+                            className="bg-[var(--color-primary-600)] hover:bg-[var(--color-primary-700)] text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 ease-in-out"
+                        >
+                            Save Key
+                        </button>
+                    </div>
+                </section>
+
                 {/* Account Section */}
                 <section className="bg-gray-800/50 border border-gray-700 p-6 rounded-2xl">
                      <div className="flex items-center gap-3 mb-4">
