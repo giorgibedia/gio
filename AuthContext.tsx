@@ -73,17 +73,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const signInWithGoogle = async () => {
         if (!auth) throw new Error("Firebase Auth not initialized.");
+        
+        // Explicitly set persistence to LOCAL to ensure user stays logged in
+        await firebaseAuth.setPersistence(auth, firebaseAuth.browserLocalPersistence);
+        
         const provider = new firebaseAuth.GoogleAuthProvider();
         await firebaseAuth.signInWithPopup(auth, provider);
     };
 
     const signUpWithEmail = async (email: string, password: string) => {
         if (!auth) throw new Error("Firebase Auth not initialized.");
+        // Persistence defaults to local for standard email auth, but setting explicitly is safe
+        await firebaseAuth.setPersistence(auth, firebaseAuth.browserLocalPersistence);
         await firebaseAuth.createUserWithEmailAndPassword(auth, email, password);
     };
 
     const signInWithEmail = async (email: string, password: string) => {
         if (!auth) throw new Error("Firebase Auth not initialized.");
+        await firebaseAuth.setPersistence(auth, firebaseAuth.browserLocalPersistence);
         await firebaseAuth.signInWithEmailAndPassword(auth, email, password);
     };
 

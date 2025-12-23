@@ -11,7 +11,8 @@ import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 
 // Configuration for Intelligent Model Fallback
-const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image';
+// UPGRADED TO GEMINI 3 PRO for highest quality
+const PRIMARY_IMAGE_MODEL = 'gemini-3-pro-image-preview'; 
 const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
 
 // Helper to convert a data URL string to a File object for saving.
@@ -135,6 +136,7 @@ const generateWithFallback = async (
         }));
     } catch (error: any) {
         const errString = error.toString();
+        // If Gemini 3 Pro is not available (404/Not Found) or permission denied, fall back to Flash 2.5
         if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND')) {
             console.warn(`Primary model failed. Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
             return await retryOperation(() => ai.models.generateContent({
@@ -386,8 +388,9 @@ export const enhancePrompt = async (
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
         }
         
+        // Upgrade to Gemini 3 Pro for prompt enhancement logic
         const response = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
-            model: 'gemini-2.5-flash-preview', 
+            model: 'gemini-3-pro-preview', 
             contents: { parts: parts },
             config: { systemInstruction: systemInstruction },
         }));
