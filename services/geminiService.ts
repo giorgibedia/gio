@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -18,8 +19,8 @@ const FALLBACK_IMAGE_MODEL = 'gemini-3-pro-image-preview';
 // Add multiple keys here to distribute the load.
 // If one hits the limit, the system will automatically try the next one.
 const SYSTEM_API_KEYS = [
-    "AIzaSyBOcKmBHgqodJkATv4xoEqWTx1ZLB6SgDU", 
-    // "ADD_SECOND_KEY_HERE", // Optional: Add a backup key here
+    "AIzaSyAqzHIdDoDSPo8F0SuYIOEqbkmRBogh4y8", // Primary (New)
+    "AIzaSyBOcKmBHgqodJkATv4xoEqWTx1ZLB6SgDU", // Secondary (Old/Backup)
 ];
 
 let currentKeyIndex = 0;
