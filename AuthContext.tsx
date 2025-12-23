@@ -34,6 +34,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setLoading(false);
             return;
         }
+
+        // CRITICAL FIX: Explicitly set persistence to LOCAL when the app loads.
+        // This ensures that even after a refresh, Firebase looks into localStorage for the token.
+        firebaseAuth.setPersistence(auth, firebaseAuth.browserLocalPersistence)
+            .catch((error) => {
+                console.error("Error setting persistence persistence:", error);
+            });
+
         const unsubscribe = firebaseAuth.onAuthStateChanged(auth, async (currentUser) => {
             // We now keep the currentUser even if anonymous, so AnalyticsService can use the UID.
             // The UI components (Header, App) will check 'user.isAnonymous' to decide what to show.
