@@ -10,6 +10,17 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist', // Standard output directory for Vite
+    chunkSizeWarningLimit: 1600, // Increase warning limit to 1600kb
+    rollupOptions: {
+        output: {
+            manualChunks(id) {
+                // Split third-party libraries into a separate 'vendor' chunk
+                if (id.includes('node_modules')) {
+                    return 'vendor';
+                }
+            }
+        }
+    }
   },
   server: {
     headers: {
