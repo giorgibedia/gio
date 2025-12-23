@@ -86,73 +86,95 @@ export const logAction = (feature: string, details?: Record<string, any>) => {
     // We allow logging for everyone (including anonymous).
     // The database rules must be set to ".write": "auth != null" (if using Anon Auth) or ".write": true (insecure).
     
-    // Capture these locally to satisfy TypeScript in the promise callback
-    const db = database; 
-    const authInstance = auth;
-
-    const currentUserId = getUserId();
-    const actionsRef = ref(db, 'actions');
+    const performLog = () => {
+        const db = database!; 
+        const authInstance = auth!;
     
-    // Detect platform using the centralized logic
-    const platform = isMobileApp() ? 'mobile_app' : 'web';
-
-    const newAction: Action = {
-        userId: currentUserId,
-        feature: feature,
-        platform: platform,
-        timestamp: serverTimestamp(),
-        details: details || {},
-    };
-    
-    push(actionsRef, newAction)
-        .then(() => {
-            // Only update user stats if we have a valid UID from Firebase or if we are logging anonymously
-            const userRef = ref(db, `users/${currentUserId}`);
-            const isAnon = !authInstance.currentUser || authInstance.currentUser.isAnonymous;
-            
-            const userUpdate: any = { 
-                lastSeen: serverTimestamp() 
-            };
-
-            // For anonymous users, ensure they have a name so they show up in the Admin Panel
-            if (isAnon) {
-                userUpdate.name = 'Anonymous';
-                userUpdate.isAnonymous = true;
-                // We don't overwrite email, leave it undefined/null
-            }
-
-            // We use update to avoid overwriting existing data like 'firstSeen'
-            update(userRef, userUpdate).catch((err) => {
-                // Ignore user stat update errors for anonymous users if permission denied
-            });
+        const currentUserId = getUserId();
+        const actionsRef = ref(db, 'actions');
         
-    }).catch(error => {
-        // Silently fail on permission denied to keep console clean, unless strictly debugging
-        if ((error as any).code !== 'PERMISSION_DENIED') {
-            console.warn("Log action failed:", error);
-        }
-    });
+        // Detect platform using the centralized logic
+        const platform = isMobileApp() ? 'mobile_app' : 'web';
+
+        const newAction: Action = {
+            userId: currentUserId,
+            feature: feature,
+            platform: platform,
+            timestamp: serverTimestamp(),
+            details: details || {},
+        };
+        
+        push(actionsRef, newAction)
+            .then(() => {
+                // Only update user stats if we have a valid UID from Firebase or if we are logging anonymously
+                const userRef = ref(db, `users/${currentUserId}`);
+                const isAnon = !authInstance.currentUser || authInstance.currentUser.isAnonymous;
+                
+                const userUpdate: any = { 
+                    lastSeen: serverTimestamp() 
+                };
+
+                // For anonymous users, ensure they have a name so they show up in the Admin Panel
+                if (isAnon) {
+                    userUpdate.name = 'Anonymous';
+                    userUpdate.isAnonymous = true;
+                    // We don't overwrite email, leave it undefined/null
+                }
+
+                // We use update to avoid overwriting existing data like 'firstSeen'
+                update(userRef, userUpdate).catch((err) => {
+                    // Ignore user stat update errors for anonymous users if permission denied
+                });
+            
+        }).catch(error => {
+            // Silently fail on permission denied to keep console clean, unless strictly debugging
+            if ((error as any).code !== 'PERMISSION_DENIED') {
+                console.warn("Log action failed:", error);
+            }
+        });
+    };
+
+    // Ensure we are authenticated (even anonymously) before trying to log
+    // This fixes issues where 'init' might be slow or failed, preventing logs from being sent
+    if (!auth.currentUser) {
+        firebaseAuth.signInAnonymously(auth)
+            .then(() => performLog())
+            .catch((e) => {
+                console.warn("Auto-auth for log failed, trying anyway:", e);
+                performLog();
+            });
+    } else {
+        performLog();
+    }
 };
 
 export const logError = (feature: string, message: string) => {
     if (!isFirebaseConfigured || !database || !auth) return;
 
-    // Capture locally
-    const db = database;
-
-    const currentUserId = getUserId();
-    const errorsRef = ref(db, 'errors');
-    const newError: AppError = {
-        userId: currentUserId,
-        feature: feature,
-        message: message,
-        timestamp: serverTimestamp(),
+    const performErrorLog = () => {
+        const db = database!;
+        const currentUserId = getUserId();
+        const errorsRef = ref(db, 'errors');
+        const newError: AppError = {
+            userId: currentUserId,
+            feature: feature,
+            message: message,
+            timestamp: serverTimestamp(),
+        };
+        push(errorsRef, newError).catch(error => {
+            if ((error as any).code !== 'PERMISSION_DENIED') {
+                console.warn("Log error failed:", error);
+            }
+        });
     };
-    push(errorsRef, newError).catch(error => {
-        if ((error as any).code !== 'PERMISSION_DENIED') {
-            console.warn("Log error failed:", error);
-        }
-    });
+
+    if (!auth.currentUser) {
+        firebaseAuth.signInAnonymously(auth)
+            .then(() => performErrorLog())
+            .catch(() => performErrorLog());
+    } else {
+        performErrorLog();
+    }
 };
 
 export const getAnalytics = async () => {

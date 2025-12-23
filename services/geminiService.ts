@@ -185,10 +185,14 @@ const timedApiCall = async <T>(
 
                     const { error: uploadError } = await supabase.storage
                         .from('generated-images')
-                        .upload(filePath, imageFile);
+                        .upload(filePath, imageFile, { 
+                            upsert: true 
+                        });
                     
                     if (uploadError) {
-                        logError('adminUpload', uploadError.message);
+                        console.error("Supabase Upload Error:", uploadError);
+                        logError('adminUpload', `${uploadError.message} (User: ${userId})`);
+                        // Ensure we return here if upload fails, as we cannot log a generation without a valid URL
                         return;
                     }
 
