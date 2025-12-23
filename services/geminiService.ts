@@ -36,7 +36,8 @@ export const isMobileApp = (): boolean => {
  * A robust way to get the Gemini AI client.
  */
 const getAiClient = (): GoogleGenAI => {
-    const apiKey = process.env.API_KEY;
+    // Hardcoded API Key to ensure it works in production without env var issues
+    const apiKey = "AIzaSyBOcKmBHgqodJkATv4xoEqWTx1ZLB6SgDU";
 
     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
         const errorMessage = "API Key is not configured. Please reload.";
@@ -405,8 +406,9 @@ export interface SupabaseStoredImage {
 }
 
 export const saveImageToGallery = async (imageFile: File): Promise<void> => {
-    if (!auth) throw new Error("Firebase Auth not initialized.");
-    const userId = auth.currentUser?.uid;
+    const authInstance = auth;
+    if (!authInstance) throw new Error("Firebase Auth not initialized.");
+    const userId = authInstance.currentUser?.uid;
     if (!userId) throw new Error("User not authenticated.");
     const filePath = `${userId}/${imageFile.name}`;
     const { error } = await supabase.storage.from('gallery-images').upload(filePath, imageFile);
@@ -454,8 +456,10 @@ export const deleteGeneratedImage = async (action: { id: string, details: { imag
     }
 
     try {
-        if (!database) throw new Error("Firebase is not configured.");
-        await remove(ref(database, `actions/${actionId}`));
+        // Capture database locally to ensure TS knows it exists
+        const db = database;
+        if (!db) throw new Error("Firebase is not configured.");
+        await remove(ref(db, `actions/${actionId}`));
     } catch(e) {
         console.error("Log removal error:", e);
         throw new Error(`Image deleted, but failed to remove log.`);
