@@ -12,7 +12,8 @@ import { ref, remove } from 'firebase/database';
 
 // Configuration for Intelligent Model Fallback
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image';
-const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
+// Changed fallback to a different model family to potentially bypass specific model rate limits
+const FALLBACK_IMAGE_MODEL = 'gemini-3-pro-image-preview';
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -80,7 +81,7 @@ const getRetryDelay = (error: any): number => {
  */
 const retryOperation = async <T>(
     operation: () => Promise<T>, 
-    maxRetries: number = 5, 
+    maxRetries: number = 3, // Reduced from 5 to fail faster
     initialDelay: number = 2000
 ): Promise<T> => {
     let lastError: any;
@@ -102,15 +103,17 @@ const retryOperation = async <T>(
                 let delay = getRetryDelay(error);
                 if (delay === 0) delay = initialDelay * Math.pow(2, i);
 
+                // UX IMPROVEMENT: If the API asks to wait more than 10 seconds, abort.
+                // It is better to tell the user to try again later than to make the UI freeze for 1 minute.
+                if (delay > 10000) {
+                    const waitTimeSec = Math.ceil(delay / 1000);
+                    console.warn(`Wait time (${waitTimeSec}s) too long. Aborting retry to free UI.`);
+                    throw new Error(`High traffic. Please wait ${waitTimeSec} seconds and try again.`);
+                }
+
                 const waitTimeSec = (delay/1000).toFixed(1);
                 console.warn(`API Rate Limit hit. Waiting ${waitTimeSec}s before attempt ${i + 2}/${maxRetries + 1}...`);
                 
-                // UX Hack: If wait time is extremely long (e.g. > 20s), notify the user via console/alert so they don't think it froze.
-                // We use setTimeout to not block the thread immediately.
-                if (delay > 20000) {
-                    console.log(`%c NOTE: High traffic. AI requires a ${waitTimeSec}s cooldown.`, 'background: #222; color: #bada55; font-size:14px');
-                }
-
                 await wait(delay);
                 continue;
             }
@@ -135,8 +138,9 @@ const generateWithFallback = async (
         }));
     } catch (error: any) {
         const errString = error.toString();
-        if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND')) {
-            console.warn(`Primary model failed. Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
+        // If it's a permission/not found error OR a Rate Limit (429), try the fallback model
+        if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND') || errString.includes('429') || errString.includes('High traffic')) {
+            console.warn(`Primary model failed (${errString}). Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
             return await retryOperation(() => ai.models.generateContent({
                 ...params,
                 model: FALLBACK_IMAGE_MODEL
