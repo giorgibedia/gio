@@ -11,12 +11,10 @@ import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 
 // Configuration for Intelligent Model Fallback
-// We cascade through these models to avoid hitting the rate limit on a single one.
-// Removed 'gemini-2.0-flash-exp' as it is primarily a text/multimodal-input model, not image-output.
-const MODEL_CASCADE = [
-    'gemini-2.5-flash-image',      // Primary: Fast & New (Nano Banana)
-    'gemini-3-pro-image-preview'   // Secondary: High Quality (Pro quota)
-];
+const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image';
+// User requested to keep 2.5, so using the same model as fallback or just retrying.
+// In practice, retrying the same model later can work if the rate limit resets.
+const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -38,10 +36,10 @@ export const isMobileApp = (): boolean => {
 
 /**
  * A robust way to get the Gemini AI client.
- * Uses the single configured API key.
  */
 const getAiClient = (): GoogleGenAI => {
-    const apiKey = process.env.API_KEY;
+    // Hardcoded API Key to ensure it works in production without env var issues
+    const apiKey = "AIzaSyBOcKmBHgqodJkATv4xoEqWTx1ZLB6SgDU";
 
     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
         const errorMessage = "API Key is not configured. Please reload.";
@@ -72,6 +70,7 @@ const getRetryDelay = (error: any): number => {
                   
     if (match && match[1]) {
         const seconds = parseFloat(match[1]);
+        console.log(`Detected API requested wait time: ${seconds}s`);
         // Add a small buffer
         return Math.ceil(seconds * 1000) + 1000;
     }
@@ -80,16 +79,11 @@ const getRetryDelay = (error: any): number => {
 
 /**
  * Wraps an async operation with robust retry logic.
- * @param operation The async function to retry
- * @param maxRetries Max attempts
- * @param initialDelay Delay in ms
- * @param failFast If true, throws immediately on 429/503 errors (used to switch models quickly)
  */
 const retryOperation = async <T>(
     operation: () => Promise<T>, 
-    maxRetries: number = 3,
-    initialDelay: number = 2000,
-    failFast: boolean = false 
+    maxRetries: number = 5, // Increased retries to ensure success during high traffic
+    initialDelay: number = 2000
 ): Promise<T> => {
     let lastError: any;
     
@@ -106,25 +100,20 @@ const retryOperation = async <T>(
             const isRateLimit = errString.includes('429') || errString.includes('RESOURCE_EXHAUSTED') || errString.includes('quota');
             const isServerOverload = errString.includes('503') || errString.includes('Overloaded');
 
-            // If failFast is true and we hit a limit, throw immediately so the caller can switch models
-            if ((isRateLimit || isServerOverload) && failFast) {
-                console.warn("Fast fail triggered due to rate limit. Switching models...");
-                throw error;
-            }
-
             if ((isRateLimit || isServerOverload) && i < maxRetries) {
                 let delay = getRetryDelay(error);
                 if (delay === 0) delay = initialDelay * Math.pow(2, i);
 
-                // If the API asks to wait more than 15 seconds, just abort this retry loop
-                // and let the app try a different model strategy if possible.
-                if (delay > 15000) {
-                     console.warn(`Retry delay ${delay}ms is too long. Aborting retry for this model.`);
-                     throw error;
+                // UX UPDATE: Google API is currently very busy and often asks for 40-60s waits.
+                // We now allow up to 70s wait to ensure success instead of failing.
+                if (delay > 70000) {
+                    const waitTimeSec = Math.ceil(delay / 1000);
+                    console.warn(`Wait time (${waitTimeSec}s) too long. Aborting.`);
+                    throw new Error(`Server is very busy. Please try again in ${Math.round(waitTimeSec/60)} minutes.`);
                 }
 
                 const waitTimeSec = (delay/1000).toFixed(1);
-                console.log(`%c ⏳ API Busy. Waiting ${waitTimeSec}s...`, 'color: orange;');
+                console.log(`%c ⏳ API Busy. Waiting ${waitTimeSec}s automatically...`, 'color: orange; font-weight: bold;');
                 
                 await wait(delay);
                 continue;
@@ -136,50 +125,30 @@ const retryOperation = async <T>(
 };
 
 /**
- * Executes a generation request with a multi-model fallback mechanism.
- * Tries models in sequence: 2.5-flash-image -> 3-pro-image-preview
+ * Executes a generation request with a fallback mechanism and retry logic.
  */
 const generateWithFallback = async (
     ai: GoogleGenAI, 
     params: any
 ): Promise<GenerateContentResponse> => {
-    let lastError: any;
-
-    for (let i = 0; i < MODEL_CASCADE.length; i++) {
-        const modelName = MODEL_CASCADE[i];
-        const isLastAttempt = i === MODEL_CASCADE.length - 1;
-        
-        try {
-            console.log(`Attempting generation with ${modelName}...`);
-            // If it's not the last model, failFast=true so we switch instantly on 429
-            // If it IS the last model, failFast=false so we actually wait/retry
-            return await retryOperation(
-                () => ai.models.generateContent({ ...params, model: modelName }),
-                isLastAttempt ? 3 : 0, // No retries for early models, just switch
-                2000,
-                !isLastAttempt // Fail fast unless it's the last hope
-            );
-        } catch (error: any) {
-            lastError = error;
-            const errString = error.toString();
-            console.warn(`Model ${modelName} failed:`, errString);
-            
-            // If it's not a rate limit/overload error (e.g. invalid prompt), stop trying other models
-            const isRateLimit = errString.includes('429') || errString.includes('RESOURCE_EXHAUSTED') || errString.includes('503') || errString.includes('Overloaded');
-            
-            if (!isRateLimit) {
-                throw error; // Don't try other models for logic errors
-            }
-            
-            // If we have more models, continue loop
-            if (!isLastAttempt) {
-                console.log("Switching to next available model...");
-                continue;
-            }
+    try {
+        console.log(`Attempting generation with ${PRIMARY_IMAGE_MODEL}...`);
+        return await retryOperation(() => ai.models.generateContent({
+            ...params,
+            model: PRIMARY_IMAGE_MODEL
+        }));
+    } catch (error: any) {
+        const errString = error.toString();
+        // If it's a permission/not found error OR a Rate Limit (429), try the fallback model
+        if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND') || errString.includes('429') || errString.includes('High traffic') || errString.includes('Server is very busy')) {
+            console.warn(`Primary model failed (${errString}). Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
+            return await retryOperation(() => ai.models.generateContent({
+                ...params,
+                model: FALLBACK_IMAGE_MODEL
+            }));
         }
+        throw error;
     }
-    
-    throw lastError;
 };
 
 /**
@@ -304,7 +273,7 @@ export const generateEditedImage = async (
 
         const response = await generateWithFallback(ai, {
             contents: { parts: [originalImagePart, maskImagePart, { text: prompt }] },
-            // Removed responseModalities: [Modality.IMAGE] as it causes 400 error on some models
+            config: { responseModalities: [Modality.IMAGE] },
         });
 
         return handleSingleApiResponse(response, 'edit');
@@ -323,7 +292,7 @@ export const generateBackgroundAlteredImage = async (
 
         const response = await generateWithFallback(ai, {
             contents: { parts: [originalImagePart, { text: finalPrompt }] },
-            // Removed responseModalities: [Modality.IMAGE]
+            config: { responseModalities: [Modality.IMAGE] },
         });
         
         return handleSingleApiResponse(response, 'background');
@@ -344,7 +313,7 @@ export const generateImageFromText = async (
         const ai = getAiClient();
         const response = await generateWithFallback(ai, {
             contents: { parts: [{ text: prompt }] },
-            // Removed responseModalities: [Modality.IMAGE]
+            config: { responseModalities: [Modality.IMAGE] },
         });
         return handleSingleApiResponse(response, 'generate image');
     });
@@ -369,7 +338,7 @@ export const generateLogo = async (
 
         const response = await generateWithFallback(ai, {
             contents: { parts: parts },
-            // Removed responseModalities: [Modality.IMAGE]
+            config: { responseModalities: [Modality.IMAGE] },
         });
 
         return handleSingleApiResponse(response, 'logo generation');
@@ -385,7 +354,7 @@ export const generateMagicEdit = async (
         const originalImagePart = dataUrlToPart(originalImage);
         const response = await generateWithFallback(ai, {
             contents: { parts: [originalImagePart, { text: userPrompt }] },
-            // Removed responseModalities: [Modality.IMAGE]
+            config: { responseModalities: [Modality.IMAGE] },
         });
         return handleSingleApiResponse(response, 'magic edit');
     });
@@ -402,7 +371,7 @@ export const composeImages = async (
         const secondImagePart = dataUrlToPart(secondImage);
         const response = await generateWithFallback(ai, {
             contents: { parts: [originalImagePart, secondImagePart, { text: userPrompt }] },
-            // Removed responseModalities: [Modality.IMAGE]
+            config: { responseModalities: [Modality.IMAGE] },
         });
         return handleSingleApiResponse(response, 'image composition');
     });

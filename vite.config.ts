@@ -6,7 +6,7 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   define: {
-    'process.env.API_KEY': JSON.stringify("AIzaSyBOwzyfguXsRLOo0J4VYMlHkq2DAOx2bI8"),
+    'process.env.API_KEY': JSON.stringify("AIzaSyBOcKmBHgqodJkATv4xoEqWTx1ZLB6SgDU"),
   },
   build: {
     outDir: 'dist', // Standard output directory for Vite
