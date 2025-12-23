@@ -12,7 +12,7 @@ import { ref, remove } from 'firebase/database';
 
 // Configuration for Intelligent Model Fallback
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image';
-// Changed fallback to a different model family to potentially bypass specific model rate limits
+// Keeping a different model family as fallback to utilize different quota buckets
 const FALLBACK_IMAGE_MODEL = 'gemini-3-pro-image-preview';
 
 // Helper to convert a data URL string to a File object for saving.
@@ -70,8 +70,8 @@ const getRetryDelay = (error: any): number => {
     if (match && match[1]) {
         const seconds = parseFloat(match[1]);
         console.log(`Detected API requested wait time: ${seconds}s`);
-        // Reduced buffer from 2000ms to 500ms to be faster
-        return Math.ceil(seconds * 1000) + 500;
+        // Add a small buffer
+        return Math.ceil(seconds * 1000) + 1000;
     }
     return 0;
 };
@@ -81,7 +81,7 @@ const getRetryDelay = (error: any): number => {
  */
 const retryOperation = async <T>(
     operation: () => Promise<T>, 
-    maxRetries: number = 3, // Reduced from 5 to fail faster
+    maxRetries: number = 5, // Increased retries to ensure success during high traffic
     initialDelay: number = 2000
 ): Promise<T> => {
     let lastError: any;
@@ -103,16 +103,16 @@ const retryOperation = async <T>(
                 let delay = getRetryDelay(error);
                 if (delay === 0) delay = initialDelay * Math.pow(2, i);
 
-                // UX IMPROVEMENT: If the API asks to wait more than 10 seconds, abort.
-                // It is better to tell the user to try again later than to make the UI freeze for 1 minute.
-                if (delay > 10000) {
+                // UX UPDATE: Google API is currently very busy and often asks for 40-60s waits.
+                // We now allow up to 70s wait to ensure success instead of failing.
+                if (delay > 70000) {
                     const waitTimeSec = Math.ceil(delay / 1000);
-                    console.warn(`Wait time (${waitTimeSec}s) too long. Aborting retry to free UI.`);
-                    throw new Error(`High traffic. Please wait ${waitTimeSec} seconds and try again.`);
+                    console.warn(`Wait time (${waitTimeSec}s) too long. Aborting.`);
+                    throw new Error(`Server is very busy. Please try again in ${Math.round(waitTimeSec/60)} minutes.`);
                 }
 
                 const waitTimeSec = (delay/1000).toFixed(1);
-                console.warn(`API Rate Limit hit. Waiting ${waitTimeSec}s before attempt ${i + 2}/${maxRetries + 1}...`);
+                console.log(`%c ⏳ API Busy. Waiting ${waitTimeSec}s automatically...`, 'color: orange; font-weight: bold;');
                 
                 await wait(delay);
                 continue;
@@ -139,7 +139,7 @@ const generateWithFallback = async (
     } catch (error: any) {
         const errString = error.toString();
         // If it's a permission/not found error OR a Rate Limit (429), try the fallback model
-        if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND') || errString.includes('429') || errString.includes('High traffic')) {
+        if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND') || errString.includes('429') || errString.includes('High traffic') || errString.includes('Server is very busy')) {
             console.warn(`Primary model failed (${errString}). Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
             return await retryOperation(() => ai.models.generateContent({
                 ...params,
