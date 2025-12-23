@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -49,16 +50,17 @@ const fileToDataUrl = (file: File): Promise<string> => {
  */
 const processImageFile = (file: File): Promise<File> => {
   return new Promise((resolve, reject) => {
-    // Dynamically determine the max dimension based on device memory to prevent crashes on older phones.
-    // 'navigator.deviceMemory' is a hint, values are in GB (e.g., 1, 2, 4, 8).
-    // It's supported in Chrome-based browsers.
+    // Dynamically determine the max dimension.
+    // REDUCED from 4096px to prevent 429 Rate Limit errors on Vercel/Public API.
+    // 2048px is High Definition (2K) and sufficient for almost all editing tasks.
     const deviceMemory = (navigator as any).deviceMemory;
-    let maxDimension = 3072; // A safe, high-quality default for most devices and browsers like Safari/Firefox.
+    let maxDimension = 1920; 
+    
     if (deviceMemory) {
         if (deviceMemory >= 4) {
-            maxDimension = 4096; // Use higher resolution for powerful devices.
+            maxDimension = 2048; // Cap at 2K to ensure API stability
         } else {
-            maxDimension = 3072; // Use a safer resolution for mid-range devices.
+            maxDimension = 1536; // Safe limit for lower end devices
         }
     }
     console.log(`Processing image with max dimension: ${maxDimension}px (Device Memory: ${deviceMemory || 'N/A'}GB)`);
@@ -101,7 +103,7 @@ const processImageFile = (file: File): Promise<File> => {
         
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Increased quality from 0.9 to 0.92 for better results without a large file size penalty.
+        // Slightly reduced quality to 0.85 to further reduce payload size and prevent timeout/rate-limits
         canvas.toBlob((blob) => {
           if (!blob) {
             return reject(new Error('Failed to convert canvas to blob during processing.'));
@@ -116,7 +118,7 @@ const processImageFile = (file: File): Promise<File> => {
             lastModified: Date.now(),
           });
           resolve(processedFile);
-        }, 'image/jpeg', 0.92);
+        }, 'image/jpeg', 0.85);
       };
 
       img.onerror = (error) => {

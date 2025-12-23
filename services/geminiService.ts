@@ -12,8 +12,9 @@ import { ref, remove } from 'firebase/database';
 
 // Configuration for Intelligent Model Fallback
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image';
-// Keeping a different model family as fallback to utilize different quota buckets
-const FALLBACK_IMAGE_MODEL = 'gemini-3-pro-image-preview';
+// User requested to keep 2.5, so using the same model as fallback or just retrying.
+// In practice, retrying the same model later can work if the rate limit resets.
+const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
