@@ -12,8 +12,6 @@ import { ref, remove } from 'firebase/database';
 
 // Configuration for Intelligent Model Fallback
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image';
-// User requested to keep 2.5, so using the same model as fallback or just retrying.
-// In practice, retrying the same model later can work if the rate limit resets.
 const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
 
 // Helper to convert a data URL string to a File object for saving.
@@ -38,8 +36,8 @@ export const isMobileApp = (): boolean => {
  * A robust way to get the Gemini AI client.
  */
 const getAiClient = (): GoogleGenAI => {
-    // Hardcoded API Key to ensure it works in production without env var issues
-    const apiKey = "AIzaSyBOcKmBHgqodJkATv4xoEqWTx1ZLB6SgDU";
+    // Hardcoded API key as requested for mobile/direct usage
+    const apiKey = "AIzaSyAoq6me5wOo81sxBtcj3lzj5IZ2Skvj9NE";
 
     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
         const errorMessage = "API Key is not configured. Please reload.";
@@ -71,8 +69,8 @@ const getRetryDelay = (error: any): number => {
     if (match && match[1]) {
         const seconds = parseFloat(match[1]);
         console.log(`Detected API requested wait time: ${seconds}s`);
-        // Add a small buffer
-        return Math.ceil(seconds * 1000) + 1000;
+        // Reduced buffer from 2000ms to 500ms to be faster
+        return Math.ceil(seconds * 1000) + 500;
     }
     return 0;
 };
@@ -82,7 +80,7 @@ const getRetryDelay = (error: any): number => {
  */
 const retryOperation = async <T>(
     operation: () => Promise<T>, 
-    maxRetries: number = 5, // Increased retries to ensure success during high traffic
+    maxRetries: number = 5, 
     initialDelay: number = 2000
 ): Promise<T> => {
     let lastError: any;
@@ -104,17 +102,15 @@ const retryOperation = async <T>(
                 let delay = getRetryDelay(error);
                 if (delay === 0) delay = initialDelay * Math.pow(2, i);
 
-                // UX UPDATE: Google API is currently very busy and often asks for 40-60s waits.
-                // We now allow up to 70s wait to ensure success instead of failing.
-                if (delay > 70000) {
-                    const waitTimeSec = Math.ceil(delay / 1000);
-                    console.warn(`Wait time (${waitTimeSec}s) too long. Aborting.`);
-                    throw new Error(`Server is very busy. Please try again in ${Math.round(waitTimeSec/60)} minutes.`);
+                const waitTimeSec = (delay/1000).toFixed(1);
+                console.warn(`API Rate Limit hit. Waiting ${waitTimeSec}s before attempt ${i + 2}/${maxRetries + 1}...`);
+                
+                // UX Hack: If wait time is extremely long (e.g. > 20s), notify the user via console/alert so they don't think it froze.
+                // We use setTimeout to not block the thread immediately.
+                if (delay > 20000) {
+                    console.log(`%c NOTE: High traffic. AI requires a ${waitTimeSec}s cooldown.`, 'background: #222; color: #bada55; font-size:14px');
                 }
 
-                const waitTimeSec = (delay/1000).toFixed(1);
-                console.log(`%c ⏳ API Busy. Waiting ${waitTimeSec}s automatically...`, 'color: orange; font-weight: bold;');
-                
                 await wait(delay);
                 continue;
             }
@@ -139,9 +135,8 @@ const generateWithFallback = async (
         }));
     } catch (error: any) {
         const errString = error.toString();
-        // If it's a permission/not found error OR a Rate Limit (429), try the fallback model
-        if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND') || errString.includes('429') || errString.includes('High traffic') || errString.includes('Server is very busy')) {
-            console.warn(`Primary model failed (${errString}). Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
+        if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND')) {
+            console.warn(`Primary model failed. Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
             return await retryOperation(() => ai.models.generateContent({
                 ...params,
                 model: FALLBACK_IMAGE_MODEL
