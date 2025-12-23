@@ -12,10 +12,10 @@ import { ref, remove } from 'firebase/database';
 
 // Configuration for Intelligent Model Fallback
 // We cascade through these models to avoid hitting the rate limit on a single one.
+// Removed 'gemini-2.0-flash-exp' as it is primarily a text/multimodal-input model, not image-output.
 const MODEL_CASCADE = [
-    'gemini-2.5-flash-image',      // Primary: Fast & New
-    'gemini-2.0-flash-exp',        // Secondary: Experimental (often distinct quota)
-    'gemini-3-pro-image-preview'   // Tertiary: High Quality (Pro quota)
+    'gemini-2.5-flash-image',      // Primary: Fast & New (Nano Banana)
+    'gemini-3-pro-image-preview'   // Secondary: High Quality (Pro quota)
 ];
 
 // Helper to convert a data URL string to a File object for saving.
@@ -137,7 +137,7 @@ const retryOperation = async <T>(
 
 /**
  * Executes a generation request with a multi-model fallback mechanism.
- * Tries models in sequence: 2.5-flash -> 2.0-flash -> 3-pro
+ * Tries models in sequence: 2.5-flash-image -> 3-pro-image-preview
  */
 const generateWithFallback = async (
     ai: GoogleGenAI, 
@@ -304,7 +304,7 @@ export const generateEditedImage = async (
 
         const response = await generateWithFallback(ai, {
             contents: { parts: [originalImagePart, maskImagePart, { text: prompt }] },
-            config: { responseModalities: [Modality.IMAGE] },
+            // Removed responseModalities: [Modality.IMAGE] as it causes 400 error on some models
         });
 
         return handleSingleApiResponse(response, 'edit');
@@ -323,7 +323,7 @@ export const generateBackgroundAlteredImage = async (
 
         const response = await generateWithFallback(ai, {
             contents: { parts: [originalImagePart, { text: finalPrompt }] },
-            config: { responseModalities: [Modality.IMAGE] },
+            // Removed responseModalities: [Modality.IMAGE]
         });
         
         return handleSingleApiResponse(response, 'background');
@@ -344,7 +344,7 @@ export const generateImageFromText = async (
         const ai = getAiClient();
         const response = await generateWithFallback(ai, {
             contents: { parts: [{ text: prompt }] },
-            config: { responseModalities: [Modality.IMAGE] },
+            // Removed responseModalities: [Modality.IMAGE]
         });
         return handleSingleApiResponse(response, 'generate image');
     });
@@ -369,7 +369,7 @@ export const generateLogo = async (
 
         const response = await generateWithFallback(ai, {
             contents: { parts: parts },
-            config: { responseModalities: [Modality.IMAGE] },
+            // Removed responseModalities: [Modality.IMAGE]
         });
 
         return handleSingleApiResponse(response, 'logo generation');
@@ -385,7 +385,7 @@ export const generateMagicEdit = async (
         const originalImagePart = dataUrlToPart(originalImage);
         const response = await generateWithFallback(ai, {
             contents: { parts: [originalImagePart, { text: userPrompt }] },
-            config: { responseModalities: [Modality.IMAGE] },
+            // Removed responseModalities: [Modality.IMAGE]
         });
         return handleSingleApiResponse(response, 'magic edit');
     });
@@ -402,7 +402,7 @@ export const composeImages = async (
         const secondImagePart = dataUrlToPart(secondImage);
         const response = await generateWithFallback(ai, {
             contents: { parts: [originalImagePart, secondImagePart, { text: userPrompt }] },
-            config: { responseModalities: [Modality.IMAGE] },
+            // Removed responseModalities: [Modality.IMAGE]
         });
         return handleSingleApiResponse(response, 'image composition');
     });
