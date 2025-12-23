@@ -123,8 +123,7 @@ export const translations = {
     acceptTermsLabel: 'I have read and agree to the Terms of Service.',
     readPolicy: '(Read Policy)',
     welcomeContinue: 'Continue',
-    temporarySiteWarning: 'Attention: This site link is temporary. Please verify the validity period below.',
-    siteExpiration: 'Time remaining until site expiration: {0} days',
+    testModeMessage: 'The application is restored and running in test mode! 🚀',
     // Policy Modal
     policyTitle: 'Terms of Service',
     policySection1Title: '1. User Content',
@@ -298,8 +297,7 @@ export const translations = {
     acceptTermsLabel: 'წავიკითხე და ვეთანხმები გამოყენების პირობებს.',
     readPolicy: '(წაიკითხეთ პოლიტიკა)',
     welcomeContinue: 'გაგრძელება',
-    temporarySiteWarning: 'ყურადღება: საიტის მისამართი დროებითია. გთხოვთ იხილოთ ვადა ქვემოთ.',
-    siteExpiration: 'საიტის გაუქმებამდე დარჩა: {0} დღე',
+    testModeMessage: 'აპლიკაცია აღდგა და მუშაობს სატესტო რეჟიმში! 🚀',
     // Policy Modal
     policyTitle: 'გამოყენების პირობები',
     policySection1Title: '1. მომხმარებლის კონტენტი',

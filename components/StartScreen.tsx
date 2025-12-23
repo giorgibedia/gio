@@ -4,7 +4,7 @@
 */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { UploadIcon, PhotoIcon, ArrowDownTrayIcon, TrashIcon, ExclamationTriangleIcon, DevicePhoneMobileIcon, ShieldCheckIcon, ClockIcon } from './icons';
+import { UploadIcon, PhotoIcon, ArrowDownTrayIcon, TrashIcon, DevicePhoneMobileIcon, ShieldCheckIcon, SparkleIcon } from './icons';
 import { useTranslations } from '../useTranslations';
 import { getImagesFromGallery, deleteImageFromGallery, SupabaseStoredImage } from '../services/geminiService';
 import Spinner from './Spinner';
@@ -16,41 +16,6 @@ interface StartScreenProps {
 const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect }) => {
   const { t } = useTranslations();
   const [isDraggingOver, setIsDraggingOver] = useState(false);
-  const [daysRemaining, setDaysRemaining] = useState<number>(14);
-
-  // Logic to handle 14-day countdown per user
-  useEffect(() => {
-    const DEADLINE_KEY = 'pixai_deadline_timestamp';
-    const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
-    
-    const storedDeadline = localStorage.getItem(DEADLINE_KEY);
-    let deadline: number;
-
-    if (storedDeadline) {
-        deadline = parseInt(storedDeadline, 10);
-    } else {
-        // If no deadline exists, set one for 14 days from now
-        deadline = Date.now() + FOURTEEN_DAYS_MS;
-        localStorage.setItem(DEADLINE_KEY, deadline.toString());
-    }
-
-    const calculateDaysLeft = () => {
-        const now = Date.now();
-        const diff = deadline - now;
-        // Convert milliseconds to days, rounding up so it shows "14 days" on day 1
-        const days = Math.ceil(diff / (24 * 60 * 60 * 1000));
-        return Math.max(0, days);
-    };
-
-    setDaysRemaining(calculateDaysLeft());
-
-    // Optional: Update everyday if the app stays open (though reloads are more likely)
-    const interval = setInterval(() => {
-        setDaysRemaining(calculateDaysLeft());
-    }, 60 * 60 * 1000); // Check every hour
-
-    return () => clearInterval(interval);
-  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onFileSelect(e.target.files);
@@ -70,10 +35,10 @@ const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect }) => {
       <div className="w-full max-w-7xl mx-auto px-4 sm:px-8 flex-grow flex flex-col items-center justify-center text-center">
         {/* Main CTA Section */}
         <div className="animate-fade-in my-12 w-full">
-            <div className="mb-10 max-w-3xl mx-auto flex items-start gap-4 p-4 bg-yellow-900/30 border border-yellow-500/40 rounded-xl text-left">
-                <ExclamationTriangleIcon className="w-8 h-8 text-yellow-400 flex-shrink-0" />
+            <div className="mb-10 max-w-3xl mx-auto flex items-center justify-center gap-4 p-4 bg-green-500/10 border border-green-500/20 rounded-xl text-left backdrop-blur-sm shadow-lg shadow-green-900/20">
+                <SparkleIcon className="w-8 h-8 text-green-400 flex-shrink-0 animate-pulse" />
                 <div>
-                    <p className="text-yellow-200 font-semibold">{t('temporarySiteWarning' as any)}</p>
+                    <p className="text-green-200 font-bold text-lg">{t('testModeMessage' as any)}</p>
                 </div>
             </div>
 
@@ -118,16 +83,6 @@ const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect }) => {
                 <div className="flex items-start justify-center gap-2 text-left bg-yellow-500/10 p-4 rounded-xl border border-yellow-500/20 max-w-md mx-auto">
                      <ShieldCheckIcon className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
                      <p className="text-xs text-yellow-200/80 leading-relaxed">{t('androidAppDisclaimer' as any)}</p>
-                </div>
-            </div>
-
-            {/* Site Expiration Countdown */}
-            <div className="mt-8 max-w-md mx-auto animate-slide-up-fade-in">
-                <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 flex items-center justify-center gap-3">
-                    <ClockIcon className="w-6 h-6 text-red-400 animate-pulse" />
-                    <p className="text-red-200 font-bold text-lg">
-                        {t('siteExpiration', daysRemaining)}
-                    </p>
                 </div>
             </div>
 
