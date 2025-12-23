@@ -311,13 +311,18 @@ const App: React.FC = () => {
 
   // Admin mode & Analytics Init Effect
   useEffect(() => {
+    // CRITICAL: Wait for auth to finish loading before initializing analytics.
+    // If we init too early, we might sign in anonymously while a Google session 
+    // is trying to restore, causing the session to be lost or overwritten.
+    if (isAuthLoading) return;
+
     if (isAdminView) {
         document.body.classList.add('admin-view');
     } else {
         document.body.classList.remove('admin-view');
     }
     initAnalytics();
-  }, [isAdminView]);
+  }, [isAdminView, isAuthLoading]);
 
   // Effect to check for welcome screen
   useEffect(() => {

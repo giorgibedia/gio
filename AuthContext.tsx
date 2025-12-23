@@ -1,4 +1,3 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -35,10 +34,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
 
-        // REMOVED: Explicit setPersistence calls. Firebase Web SDK defaults to 
-        // 'browserLocalPersistence' (localStorage/IndexedDB) automatically. 
-        // Manually setting it inside useEffect or before sign-in methods often causes 
-        // race conditions where the state resets on refresh.
+        // REMOVED: Explicit setPersistence calls inside useEffect. 
+        // We now enforce persistence at the moment of sign-in action to prevent race conditions during initialization.
 
         const unsubscribe = firebaseAuth.onAuthStateChanged(auth, async (currentUser) => {
             // We now keep the currentUser even if anonymous, so AnalyticsService can use the UID.
@@ -79,20 +76,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const signInWithGoogle = async () => {
         if (!auth) throw new Error("Firebase Auth not initialized.");
-        // Removed manual setPersistence to rely on default local behavior
+        // Ensure persistence is set to LOCAL to persist session across refreshes
+        await firebaseAuth.setPersistence(auth, firebaseAuth.browserLocalPersistence);
+        
         const provider = new firebaseAuth.GoogleAuthProvider();
         await firebaseAuth.signInWithPopup(auth, provider);
     };
 
     const signUpWithEmail = async (email: string, password: string) => {
         if (!auth) throw new Error("Firebase Auth not initialized.");
-        // Removed manual setPersistence to rely on default local behavior
+        // Ensure persistence is set to LOCAL to persist session across refreshes
+        await firebaseAuth.setPersistence(auth, firebaseAuth.browserLocalPersistence);
         await firebaseAuth.createUserWithEmailAndPassword(auth, email, password);
     };
 
     const signInWithEmail = async (email: string, password: string) => {
         if (!auth) throw new Error("Firebase Auth not initialized.");
-        // Removed manual setPersistence to rely on default local behavior
+        // Ensure persistence is set to LOCAL to persist session across refreshes
+        await firebaseAuth.setPersistence(auth, firebaseAuth.browserLocalPersistence);
         await firebaseAuth.signInWithEmailAndPassword(auth, email, password);
     };
 
