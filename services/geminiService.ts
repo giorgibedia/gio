@@ -15,6 +15,12 @@ import { ref, remove } from 'firebase/database';
 const PRIMARY_IMAGE_MODEL = 'gemini-3-pro-image-preview'; 
 const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
 
+// OpenRouter Configuration
+const OPENROUTER_API_KEY = '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';
+const OPENROUTER_MODEL = 'google/gemini-2.5-flash-image';
+
+export type ModelProvider = 'google' | 'openrouter';
+
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
   const response = await fetch(dataUrl);
@@ -160,6 +166,98 @@ const generateWithFallback = async (
 };
 
 /**
+ * OpenRouter API Call wrapper
+ */
+const callOpenRouter = async (
+    prompt: string, 
+    images: string[] = [] // Base64 data URLs
+): Promise<string> => {
+    try {
+        const content: any[] = [{ type: "text", text: prompt }];
+        
+        // Add images to content
+        images.forEach(img => {
+            content.push({
+                type: "image_url",
+                image_url: { url: img }
+            });
+        });
+
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": typeof window !== 'undefined' ? window.location.origin : '',
+                "X-Title": "PixAI"
+            },
+            body: JSON.stringify({
+                model: OPENROUTER_MODEL,
+                messages: [
+                    {
+                        role: "user",
+                        content: content
+                    }
+                ],
+                // Attempting to force the model to provide useful output even if it generates an image natively
+                temperature: 0.7,
+                max_tokens: 1000, // Constrain output tokens to prevent "insufficient credits" errors
+            })
+        });
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            const errMsg = errData.error?.message || `OpenRouter Error: ${response.statusText}`;
+            
+            // Handle credit/quota errors specifically
+            if (response.status === 402 || errMsg.toLowerCase().includes('credits') || errMsg.toLowerCase().includes('balance')) {
+                throw new Error("OpenRouter credits exhausted. Please recharge or try again later.");
+            }
+            
+            throw new Error(errMsg);
+        }
+
+        const data = await response.json();
+        const resultText = data.choices?.[0]?.message?.content;
+
+        if (!resultText) {
+            console.error("OpenRouter Empty Content Response:", JSON.stringify(data, null, 2));
+            // Check if there is an image in a non-standard location or if tokens were consumed
+            if (data.usage?.completion_tokens > 0 || data.usage?.native_tokens_completion_images > 0) {
+                 throw new Error("The model generated an image but OpenRouter did not return the image data in the response text.");
+            }
+            throw new Error("OpenRouter returned no content. The model may have refused the request.");
+        }
+        
+        // Attempt to find a markdown image or just return text if it seems to be a URL
+        // Regex for markdown image: ![alt](url)
+        const markdownImageMatch = resultText.match(/!\[.*?\]\((.*?)\)/);
+        if (markdownImageMatch && markdownImageMatch[1]) {
+            return markdownImageMatch[1];
+        }
+
+        // Regex for raw URL (http/s)
+        const urlMatch = resultText.match(/(https?:\/\/[^\s]+)/);
+        if (urlMatch && (urlMatch[0].endsWith('.png') || urlMatch[0].endsWith('.jpg') || urlMatch[0].endsWith('.webp'))) {
+             return urlMatch[0];
+        }
+        
+        // Fallback: If result is short and doesn't look like image data, throw
+        if (resultText.length < 200 && !resultText.startsWith('data:')) {
+             console.warn("OpenRouter Text Response (Not Image):", resultText);
+             throw new Error("The OpenRouter model returned text instead of an image. Try changing your prompt.");
+        }
+        
+        return resultText;
+
+    } catch (error) {
+        console.error("OpenRouter Call Failed:", error);
+        throw error;
+    }
+};
+
+
+/**
  * A wrapper function to time API calls, log performance, and handle errors.
  */
 const timedApiCall = async <T>(
@@ -175,12 +273,22 @@ const timedApiCall = async <T>(
         const augmentedDetails = { ...details, duration };
         logAction(featureName, augmentedDetails);
 
-        if (typeof result === 'string' && result.startsWith('data:image')) {
+        if (typeof result === 'string' && (result.startsWith('data:image') || result.startsWith('http'))) {
             (async () => {
                 try {
                     const userId = getUserId();
                     const filename = `${featureName.replace(/\s/g, '_')}-${Date.now()}.png`;
-                    const imageFile = await dataURLtoFile(result, filename);
+                    let imageFile: File;
+                    
+                    if (result.startsWith('http')) {
+                        // For URLs (OpenRouter), fetch blob first
+                        const res = await fetch(result);
+                        const blob = await res.blob();
+                        imageFile = new File([blob], filename, { type: blob.type });
+                    } else {
+                        imageFile = await dataURLtoFile(result, filename);
+                    }
+                    
                     const filePath = `${userId}/${filename}`;
 
                     const { error: uploadError } = await supabase.storage
@@ -192,7 +300,6 @@ const timedApiCall = async <T>(
                     if (uploadError) {
                         console.error("Supabase Upload Error:", uploadError);
                         logError('adminUpload', `${uploadError.message} (User: ${userId})`);
-                        // Ensure we return here if upload fails, as we cannot log a generation without a valid URL
                         return;
                     }
 
@@ -275,8 +382,27 @@ export const generateEditedImage = async (
     originalImage: string,
     userPrompt: string,
     maskImage: File,
+    provider: ModelProvider = 'google'
 ): Promise<string> => {
-    return timedApiCall('retouch', { prompt: userPrompt }, async () => {
+    return timedApiCall('retouch', { prompt: userPrompt, provider }, async () => {
+        
+        if (provider === 'openrouter') {
+             // For OpenRouter, we simulate masking by sending original + mask + instructions
+             // Note: This depends heavily on the model's ability to interpret a mask image.
+             const maskDataUrl = await new Promise<string>((resolve) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result as string);
+                reader.readAsDataURL(maskImage);
+             });
+             
+             const prompt = `Edit the first image based on the user request: "${userPrompt}". 
+             Use the second image as a mask (white areas are editable, black areas must remain unchanged). 
+             Return the final edited image. Please provide the response as a markdown image link.`;
+             
+             return await callOpenRouter(prompt, [originalImage, maskDataUrl]);
+        }
+        
+        // Google Logic (Default or Fallback)
         const ai = getAiClient();
         const originalImagePart = dataUrlToPart(originalImage);
         const maskImagePart = await fileToPart(maskImage);
@@ -295,8 +421,16 @@ export const generateEditedImage = async (
 export const generateBackgroundAlteredImage = async (
     originalImage: string,
     alterationPrompt: string,
+    provider: ModelProvider = 'google'
 ): Promise<string> => {
-    return timedApiCall('background', { prompt: alterationPrompt }, async () => {
+    return timedApiCall('background', { prompt: alterationPrompt, provider }, async () => {
+
+        if (provider === 'openrouter') {
+            const prompt = `Remove the background of this image and replace it with: "${alterationPrompt}". 
+            Keep the main subject exactly as is. Return the final image as a markdown image link.`;
+            return await callOpenRouter(prompt, [originalImage]);
+        }
+
         const ai = getAiClient();
         const systemPrompt = `Isolate the main subject and replace the background. Subject must be preserved perfectly. The new background should realistically match the subject's lighting and perspective.`;
         const finalPrompt = `${systemPrompt}\n\nUser's request: "${alterationPrompt}"`;
@@ -320,8 +454,15 @@ export const getAssistantResponse = async (
 
 export const generateImageFromText = async (
     prompt: string,
+    provider: ModelProvider = 'google'
 ): Promise<string> => {
-    return timedApiCall('generateImage', { prompt }, async () => {
+    return timedApiCall('generateImage', { prompt, provider }, async () => {
+
+        if (provider === 'openrouter') {
+            const finalPrompt = `Generate a photorealistic image of: ${prompt}. Return the image as a markdown image link.`;
+            return await callOpenRouter(finalPrompt, []);
+        }
+
         const ai = getAiClient();
         const response = await generateWithFallback(ai, {
             contents: { parts: [{ text: prompt }] },
@@ -335,8 +476,21 @@ export const generateLogo = async (
     userPrompt: string,
     existingLogoDataUrl?: string | null,
     backgroundImageDataUrl?: string | null,
+    provider: ModelProvider = 'google'
 ): Promise<string> => {
-    return timedApiCall('generateLogo', { prompt: userPrompt }, async () => {
+    return timedApiCall('generateLogo', { prompt: userPrompt, provider }, async () => {
+
+        if (provider === 'openrouter') {
+             const images = [];
+             if (backgroundImageDataUrl) images.push(backgroundImageDataUrl);
+             else if (existingLogoDataUrl) images.push(existingLogoDataUrl);
+             
+             let prompt = `Create a logo: "${userPrompt}". Return the image as a markdown image link.`;
+             if (images.length > 0) prompt = `Using the provided image as context/background, create/modify a logo: "${userPrompt}". Return the final image as a markdown image link.`;
+             
+             return await callOpenRouter(prompt, images);
+        }
+
         const ai = getAiClient();
         let systemPrompt = !existingLogoDataUrl && !backgroundImageDataUrl 
             ? `You are a professional logo designer AI. Create a unique, high-quality logo based on the user's description. Focus on symbolic iconography.`
@@ -360,8 +514,15 @@ export const generateLogo = async (
 export const generateMagicEdit = async (
     originalImage: string,
     userPrompt: string,
+    provider: ModelProvider = 'google'
 ): Promise<string> => {
-    return timedApiCall('magicEdit', { prompt: userPrompt }, async () => {
+    return timedApiCall('magicEdit', { prompt: userPrompt, provider }, async () => {
+
+        if (provider === 'openrouter') {
+            const prompt = `Edit this image: "${userPrompt}". Make it photorealistic. Return the final image as a markdown image link.`;
+            return await callOpenRouter(prompt, [originalImage]);
+        }
+
         const ai = getAiClient();
         const originalImagePart = dataUrlToPart(originalImage);
         const response = await generateWithFallback(ai, {
@@ -376,8 +537,15 @@ export const composeImages = async (
     originalImage: string,
     secondImage: string,
     userPrompt: string,
+    provider: ModelProvider = 'google'
 ): Promise<string> => {
-    return timedApiCall('composeImages', { prompt: userPrompt }, async () => {
+    return timedApiCall('composeImages', { prompt: userPrompt, provider }, async () => {
+
+        if (provider === 'openrouter') {
+            const prompt = `Compose these two images together based on this instruction: "${userPrompt}". Return the final composed image as a markdown image link.`;
+            return await callOpenRouter(prompt, [originalImage, secondImage]);
+        }
+
         const ai = getAiClient();
         const originalImagePart = dataUrlToPart(originalImage);
         const secondImagePart = dataUrlToPart(secondImage);
@@ -392,8 +560,12 @@ export const composeImages = async (
 export const enhancePrompt = async (
     userPrompt: string,
     image?: string | null,
+    provider: ModelProvider = 'google'
 ): Promise<string> => {
-    return timedApiCall('enhancePrompt', { prompt: userPrompt, hasImage: !!image }, async () => {
+    return timedApiCall('enhancePrompt', { prompt: userPrompt, hasImage: !!image, provider }, async () => {
+        // We use Google for prompt enhancement even if OpenRouter is selected for generation,
+        // unless explicitly requested to switch. But for consistency, let's keep it on Gemini 3 Pro
+        // as it is excellent at reasoning/text tasks.
         const ai = getAiClient();
         const parts: any[] = [{ text: userPrompt }];
         let systemInstruction = `You are a prompt engineering expert. Expand the user's brief idea into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
