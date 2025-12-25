@@ -17,7 +17,7 @@ const TEXT_MODEL = 'gemini-3-flash-preview';
 // --- HARDCODED API KEY ---
 // ⚠️ ჩასვით თქვენი მუშა API გასაღები აქ ბრჭყალებში.
 // მაგალითად: const DIRECT_API_KEY = "AIzaSy...";
-const DIRECT_API_KEY = ""; 
+const DIRECT_API_KEY = "AIzaSyC6KcojG7D2Uq_lHryo9c3v6wmuDtT9Rm0"; 
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
