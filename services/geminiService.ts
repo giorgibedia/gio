@@ -1,4 +1,3 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -12,10 +11,7 @@ import { ref, remove } from 'firebase/database';
 
 // Configuration for Gemini Models - Using Gemini 2.5 Flash Image
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image'; 
-
-// --- HARDCODED API KEY ---
-// ეს გასაღები პირდაპირ არის ჩაწერილი. Vercel-ის ცვლადები აღარ მოწმდება.
-const DIRECT_API_KEY = "AIzaSyAOXp0jHSLG-BQV6W7QJ4BnsDmWQVRlRwI"; 
+const TEXT_MODEL = 'gemini-3-flash-preview';
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -37,11 +33,16 @@ export const isMobileApp = (): boolean => {
 
 /**
  * A robust way to get the Gemini AI client.
- * Uses the HARDCODED key directly.
+ * Uses process.env.API_KEY directly.
  */
 const getAiClient = (): GoogleGenAI => {
-    // პირდაპირ ვიყენებთ გასაღებს, არანაირი process.env შემოწმება
-    return new GoogleGenAI({ apiKey: DIRECT_API_KEY });
+    const apiKey = process.env.API_KEY;
+    if (!apiKey || apiKey.length < 10) {
+        // Fallback alert for developer
+        console.error("API Key is missing in environment variables.");
+        throw new Error("API Key Missing! Please ensure process.env.API_KEY is set.");
+    }
+    return new GoogleGenAI({ apiKey });
 };
 
 /**
@@ -53,12 +54,33 @@ export const verifyGeminiAccess = async (): Promise<boolean> => {
         const ai = getAiClient();
         // Use a lightweight text request to the flash model to check access/billing
         await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: TEXT_MODEL,
             contents: { parts: [{ text: 'ping' }] },
         });
         return true;
-    } catch (error) {
+    } catch (error: any) {
         console.error("Gemini Access Verification Failed:", error);
+        
+        let errorMsg = error.toString();
+        if (error.message) errorMsg += " " + error.message;
+        
+        // If we detect the "API not enabled" error, log a very helpful message
+        if (errorMsg.includes("not been used in project") || errorMsg.includes("disabled")) {
+            console.warn(`
+            ---------------------------------------------------------
+            ⚠️ ATTENTION: The API Key is valid, but Gemini is OFF.
+            
+            To fix this, either:
+            1. Use a key from AI Studio (Easier): https://aistudio.google.com/app/apikey
+            
+            OR
+            
+            2. Enable the API for your current key: 
+               Look for the URL in the error message above (console.developers.google.com...) 
+               Click it and click "ENABLE".
+            ---------------------------------------------------------
+            `);
+        }
         return false;
     }
 };
@@ -110,9 +132,15 @@ const retryOperation = async <T>(
                 errString = (error.message || "") + (error.toString ? error.toString() : "") + JSON.stringify(error);
             } catch(e) { errString = "unknown error"; }
             
-            // Check for specific Leaked Key / Permission Denied error
-            if (errString.includes("leaked") || (errString.includes("403") && errString.includes("key"))) {
-                 throw new Error("CRITICAL: Your API Key is blocked/leaked. Please generate a NEW key and paste it into services/geminiService.ts");
+            // Check for 403 Permission Denied (API Not Enabled)
+            if (errString.includes("403") || errString.includes("PERMISSION_DENIED") || errString.includes("disabled")) {
+                 console.error("API Permission Error details:", errString);
+                 throw new Error("API Error: Gemini API is disabled. Please get a new key from https://aistudio.google.com/app/apikey");
+            }
+
+            // Check for specific Leaked Key
+            if (errString.includes("leaked")) {
+                 throw new Error("CRITICAL: Your API Key is blocked/leaked. Please generate a NEW key.");
             }
 
             const isRateLimit = errString.includes('429') || errString.includes('RESOURCE_EXHAUSTED') || errString.includes('quota');
@@ -125,10 +153,6 @@ const retryOperation = async <T>(
                 const waitTimeSec = (delay/1000).toFixed(1);
                 console.warn(`API Rate Limit hit. Waiting ${waitTimeSec}s before attempt ${i + 2}/${maxRetries + 1}...`);
                 
-                if (delay > 20000) {
-                    console.log(`%c NOTE: High traffic. AI requires a ${waitTimeSec}s cooldown.`, 'background: #222; color: #bada55; font-size:14px');
-                }
-
                 await wait(delay);
                 continue;
             }
@@ -322,7 +346,7 @@ export const getAssistantResponse = async (
     try {
         const ai = getAiClient();
         const chat = ai.chats.create({
-            model: 'gemini-2.5-flash',
+            model: TEXT_MODEL,
             history: history,
         });
         const result = await chat.sendMessage({ message: newMessage });
@@ -425,7 +449,7 @@ export const enhancePrompt = async (
         
         // Using text generation on the same client, switched to 2.5 flash
         const response = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
-            model: 'gemini-2.5-flash', // Switched for better quota handling
+            model: TEXT_MODEL, // Switched for better quota handling
             contents: { parts: parts },
             config: { systemInstruction: systemInstruction },
         }));
