@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -12,6 +13,11 @@ import { ref, remove } from 'firebase/database';
 // Configuration for Gemini Models - Using Gemini 2.5 Flash Image
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image'; 
 const TEXT_MODEL = 'gemini-3-flash-preview';
+
+// --- HARDCODED API KEY ---
+// ⚠️ ჩასვით თქვენი მუშა API გასაღები აქ ბრჭყალებში.
+// მაგალითად: const DIRECT_API_KEY = "AIzaSy...";
+const DIRECT_API_KEY = ""; 
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -33,16 +39,23 @@ export const isMobileApp = (): boolean => {
 
 /**
  * A robust way to get the Gemini AI client.
- * Uses process.env.API_KEY directly.
+ * Checks DIRECT_API_KEY first, then process.env.API_KEY.
  */
 const getAiClient = (): GoogleGenAI => {
-    const apiKey = process.env.API_KEY;
-    if (!apiKey || apiKey.length < 10) {
-        // Fallback alert for developer
-        console.error("API Key is missing in environment variables.");
-        throw new Error("API Key Missing! Please ensure process.env.API_KEY is set.");
+    // 1. Check Hardcoded Key
+    if (DIRECT_API_KEY && DIRECT_API_KEY.length > 10) {
+        return new GoogleGenAI({ apiKey: DIRECT_API_KEY });
     }
-    return new GoogleGenAI({ apiKey });
+
+    // 2. Check Environment Variable (Vercel)
+    const envKey = process.env.API_KEY as string | undefined;
+    if (envKey && envKey.length > 10) {
+        return new GoogleGenAI({ apiKey: envKey });
+    }
+
+    // Fallback alert for developer
+    console.error("API Key is missing.");
+    throw new Error("API Key Missing! Please open 'services/geminiService.ts' and paste your key into 'DIRECT_API_KEY'.");
 };
 
 /**
