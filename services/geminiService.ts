@@ -10,22 +10,41 @@ import { supabase } from './supabaseClient';
 import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 
-// Configuration for Gemini Models - Using Gemini 2.5 Flash Image
+// Types
+export type ApiProvider = 'google' | 'together';
+
+// Configuration
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image'; 
 const TEXT_MODEL = 'gemini-3-flash-preview';
 
-// --- HARDCODED API KEY ---
-// ⚠️ ჩასვით თქვენი მუშა API გასაღები აქ ბრჭყალებში.
-// მაგალითად: const DIRECT_API_KEY = "AIzaSy...";
+// TogetherAI Models
+const TOGETHER_TEXT_MODEL = "meta-llama/Llama-3.3-70B-Instruct-Turbo";
+const TOGETHER_IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"; 
+// Note: TogetherAI Inpainting API is complex, mapping basic edit to FLUX Fill logic manually
+const TOGETHER_INPAINT_MODEL = "black-forest-labs/FLUX.1-Fill-dev"; 
+
+// --- HARDCODED API KEY (Default Fallback) ---
 const DIRECT_API_KEY = "AIzaSyC6KcojG7D2Uq_lHryo9c3v6wmuDtT9Rm0"; 
 
-// Local Storage Key for Custom API Key override
+// Local Storage Keys
 const CUSTOM_API_KEY_STORAGE = 'pixai_debug_api_key';
+const API_PROVIDER_STORAGE = 'pixai_api_provider';
+
+// --- API Management ---
+
+export const setApiProvider = (provider: ApiProvider) => {
+    localStorage.setItem(API_PROVIDER_STORAGE, provider);
+    // We don't reload here, UI should handle state update
+};
+
+export const getApiProvider = (): ApiProvider => {
+    return (localStorage.getItem(API_PROVIDER_STORAGE) as ApiProvider) || 'google';
+};
 
 export const setDebugApiKey = (key: string) => {
     if (!key.trim()) return;
     localStorage.setItem(CUSTOM_API_KEY_STORAGE, key.trim());
-    window.location.reload(); // Reload to ensure the new client is initialized
+    window.location.reload(); 
 };
 
 export const clearDebugApiKey = () => {
@@ -37,16 +56,14 @@ export const getDebugApiKey = () => {
     return localStorage.getItem(CUSTOM_API_KEY_STORAGE) || '';
 };
 
-// Helper to convert a data URL string to a File object for saving.
+// --- Helpers ---
+
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
   const response = await fetch(dataUrl);
   const blob = await response.blob();
   return new File([blob], filename, { type: blob.type });
 };
 
-/**
- * Detects if the current environment is an Android APK or Mobile App.
- */
 export const isMobileApp = (): boolean => {
   const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
   const isAndroidWebView = /android/i.test(userAgent) && /wv/i.test(userAgent);
@@ -55,181 +72,90 @@ export const isMobileApp = (): boolean => {
   return isAndroidWebView || isLocalFile || isIOS;
 };
 
-/**
- * A robust way to get the Gemini AI client.
- * Checks LocalStorage first (for testing), then DIRECT_API_KEY, then process.env.API_KEY.
- */
-const getAiClient = (): GoogleGenAI => {
-    // 0. Check LocalStorage Override (Highest Priority for testing/debugging)
+// --- Client Initialization ---
+
+const getApiKey = (): string => {
+    // 1. Custom Key (Highest Priority)
     const debugKey = localStorage.getItem(CUSTOM_API_KEY_STORAGE);
-    if (debugKey && debugKey.length > 10) {
-        console.log("Using Custom API Key from LocalStorage");
-        return new GoogleGenAI({ apiKey: debugKey });
-    }
+    if (debugKey && debugKey.length > 5) return debugKey;
 
-    // 1. Check Hardcoded Key
-    if (DIRECT_API_KEY && DIRECT_API_KEY.length > 10) {
-        return new GoogleGenAI({ apiKey: DIRECT_API_KEY });
-    }
+    // 2. Hardcoded / Env Key (Google Only fallback usually)
+    const envKey = process.env.API_KEY;
+    if (envKey && envKey.length > 10) return envKey;
+    if (DIRECT_API_KEY && DIRECT_API_KEY.length > 10) return DIRECT_API_KEY;
 
-    // 2. Check Environment Variable (Vercel)
-    const envKey = process.env.API_KEY as string | undefined;
-    if (envKey && envKey.length > 10) {
-        return new GoogleGenAI({ apiKey: envKey });
-    }
-
-    // Fallback alert for developer
-    console.error("API Key is missing.");
-    throw new Error("API Key Missing! Please enter a key in Settings or configure the app.");
+    throw new Error("API Key Missing.");
 };
 
-/**
- * Verifies if the configured API key has access to Gemini.
- * Used for UI status indication.
- */
+const getAiClient = (): GoogleGenAI => {
+    return new GoogleGenAI({ apiKey: getApiKey() });
+};
+
+// --- TOGETHER AI IMPLEMENTATION ---
+
+const callTogetherAI = async (endpoint: string, body: any) => {
+    const apiKey = getApiKey();
+    const response = await fetch(`https://api.together.xyz/v1/${endpoint}`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error?.message || `TogetherAI Error: ${response.statusText}`);
+    }
+    return await response.json();
+};
+
+// Helper to remove data:image/png;base64, prefix
+const cleanBase64 = (dataUrl: string) => dataUrl.split(',')[1];
+
+// --- Unified Verification ---
+
 export const verifyGeminiAccess = async (): Promise<boolean> => {
+    const provider = getApiProvider();
     try {
-        const ai = getAiClient();
-        // Use a lightweight text request to the flash model to check access/billing
-        await ai.models.generateContent({
-            model: TEXT_MODEL,
-            contents: { parts: [{ text: 'ping' }] },
-        });
+        if (provider === 'google') {
+            const ai = getAiClient();
+            await ai.models.generateContent({
+                model: TEXT_MODEL,
+                contents: { parts: [{ text: 'ping' }] },
+            });
+        } else if (provider === 'together') {
+            await callTogetherAI('chat/completions', {
+                model: TOGETHER_TEXT_MODEL,
+                messages: [{ role: 'user', content: 'ping' }],
+                max_tokens: 5
+            });
+        }
         return true;
     } catch (error: any) {
-        console.error("Gemini Access Verification Failed:", error);
-        
-        let errorMsg = error.toString();
-        if (error.message) errorMsg += " " + error.message;
-        
-        // If we detect the "API not enabled" error, log a very helpful message
-        if (errorMsg.includes("not been used in project") || errorMsg.includes("disabled")) {
-            console.warn(`
-            ---------------------------------------------------------
-            ⚠️ ATTENTION: The API Key is valid, but Gemini is OFF.
-            
-            To fix this, either:
-            1. Use a key from AI Studio (Easier): https://aistudio.google.com/app/apikey
-            
-            OR
-            
-            2. Enable the API for your current key: 
-               Look for the URL in the error message above (console.developers.google.com...) 
-               Click it and click "ENABLE".
-            ---------------------------------------------------------
-            `);
-        }
+        console.error(`${provider} Access Verification Failed:`, error);
         return false;
     }
 };
 
-/**
- * Utility to wait for a specified duration
- */
-const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+// --- Wrapper for Timing & Logging ---
 
-/**
- * Parses the error message to find a suggested wait time.
- */
-const getRetryDelay = (error: any): number => {
-    let textToSearch = "";
-    if (typeof error === 'string') textToSearch += error;
-    if (error.message) textToSearch += " " + error.message;
-    if (error.toString) textToSearch += " " + error.toString();
-    try { textToSearch += " " + JSON.stringify(error); } catch(e) {}
-
-    // Matches: "retry in 54.5s", "retryDelay": "54s"
-    const match = textToSearch.match(/retry in\s+([0-9.]+)\s*s/i) || 
-                  textToSearch.match(/retryDelay"?\s*:\s*"?([0-9.]+)\s*s"?/i);
-                  
-    if (match && match[1]) {
-        const seconds = parseFloat(match[1]);
-        console.log(`Detected API requested wait time: ${seconds}s`);
-        return Math.ceil(seconds * 1000) + 500;
-    }
-    return 0;
-};
-
-/**
- * Wraps an async operation with robust retry logic.
- */
-const retryOperation = async <T>(
-    operation: () => Promise<T>, 
-    maxRetries: number = 5, 
-    initialDelay: number = 2000
-): Promise<T> => {
-    let lastError: any;
-    
-    for (let i = 0; i <= maxRetries; i++) {
-        try {
-            return await operation();
-        } catch (error: any) {
-            lastError = error;
-            let errString = "";
-            try {
-                errString = (error.message || "") + (error.toString ? error.toString() : "") + JSON.stringify(error);
-            } catch(e) { errString = "unknown error"; }
-            
-            // Check for 403 Permission Denied (API Not Enabled)
-            if (errString.includes("403") || errString.includes("PERMISSION_DENIED") || errString.includes("disabled")) {
-                 console.error("API Permission Error details:", errString);
-                 throw new Error("API Error: Gemini API is disabled. Please get a new key from https://aistudio.google.com/app/apikey");
-            }
-
-            // Check for specific Leaked Key
-            if (errString.includes("leaked")) {
-                 throw new Error("CRITICAL: Your API Key is blocked/leaked. Please generate a NEW key.");
-            }
-
-            const isRateLimit = errString.includes('429') || errString.includes('RESOURCE_EXHAUSTED') || errString.includes('quota');
-            const isServerOverload = errString.includes('503') || errString.includes('Overloaded');
-
-            if ((isRateLimit || isServerOverload) && i < maxRetries) {
-                let delay = getRetryDelay(error);
-                if (delay === 0) delay = initialDelay * Math.pow(2, i);
-
-                const waitTimeSec = (delay/1000).toFixed(1);
-                console.warn(`API Rate Limit hit. Waiting ${waitTimeSec}s before attempt ${i + 2}/${maxRetries + 1}...`);
-                
-                await wait(delay);
-                continue;
-            }
-            break;
-        }
-    }
-    throw lastError;
-};
-
-/**
- * Executes a generation request using the specified model.
- */
-const generateWithModel = async (
-    ai: GoogleGenAI, 
-    params: any
-): Promise<GenerateContentResponse> => {
-    console.log(`Attempting generation with ${PRIMARY_IMAGE_MODEL}...`);
-    return await retryOperation(() => ai.models.generateContent({
-        ...params,
-        model: PRIMARY_IMAGE_MODEL
-    }));
-};
-
-/**
- * A wrapper function to time API calls, log performance, and handle errors.
- */
 const timedApiCall = async <T>(
     featureName: string,
     details: Record<string, any> | null,
     apiCall: () => Promise<T>
 ): Promise<T> => {
     const startTime = Date.now();
+    const provider = getApiProvider();
     try {
         const result = await apiCall();
         const duration = (Date.now() - startTime) / 1000;
         
-        const augmentedDetails = { ...details, duration, model: PRIMARY_IMAGE_MODEL };
+        const augmentedDetails = { ...details, duration, model: provider === 'google' ? PRIMARY_IMAGE_MODEL : 'together-ai', provider };
         logAction(featureName, augmentedDetails);
 
+        // Auto-upload to supabase if it looks like an image URL/Base64
         if (typeof result === 'string' && (result.startsWith('data:image') || result.startsWith('http'))) {
             (async () => {
                 try {
@@ -246,44 +172,28 @@ const timedApiCall = async <T>(
                     }
                     
                     const filePath = `${userId}/${filename}`;
+                    const { error: uploadError } = await supabase.storage.from('generated-images').upload(filePath, imageFile, { upsert: true });
+                    if (uploadError) return;
 
-                    const { error: uploadError } = await supabase.storage
-                        .from('generated-images')
-                        .upload(filePath, imageFile, { 
-                            upsert: true 
-                        });
-                    
-                    if (uploadError) {
-                        console.error("Supabase Upload Error:", uploadError);
-                        logError('adminUpload', `${uploadError.message} (User: ${userId})`);
-                        return;
-                    }
-
-                    const { data: { publicUrl } } = supabase.storage
-                        .from('generated-images')
-                        .getPublicUrl(filePath);
-
+                    const { data: { publicUrl } } = supabase.storage.from('generated-images').getPublicUrl(filePath);
                     logAction('generation', {
                         imageUrl: publicUrl,
                         prompt: details?.prompt,
                         originalFeature: featureName,
-                        model: PRIMARY_IMAGE_MODEL
+                        model: provider === 'google' ? PRIMARY_IMAGE_MODEL : 'together-ai'
                     });
-
-                } catch (e) {
-                    console.error("Admin upload failed (non-critical):", e);
-                }
+                } catch (e) { console.error("Admin upload failed:", e); }
             })();
         }
-
         return result;
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
         logError(featureName, errorMessage);
-        console.error(`Error in feature '${featureName}':`, error);
         throw error;
     }
 };
+
+// --- Core Generation Functions ---
 
 const blobToBase64 = (blob: Blob): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -298,42 +208,25 @@ const blobToBase64 = (blob: Blob): Promise<string> => {
     });
 };
 
-const fileToPart = async (file: File): Promise<{ inlineData: { mimeType: string; data: string; } }> => {
+// Google Helpers
+const fileToPart = async (file: File) => {
     const mimeType = file.type;
     const data = await blobToBase64(file);
     return { inlineData: { mimeType, data } };
 };
-
-const dataUrlToPart = (dataUrl: string): { inlineData: { mimeType: string; data: string; } } => {
+const dataUrlToPart = (dataUrl: string) => {
     const match = dataUrl.match(/^data:(.+);base64,(.+)$/);
     if (!match) throw new Error('Invalid data URL format');
     return { inlineData: { mimeType: match[1], data: match[2] } };
 };
-
-const handleSingleApiResponse = (
-    response: GenerateContentResponse,
-    context: string 
-): string => {
-    if (response.promptFeedback?.blockReason) {
-        throw new Error(`Blocked: ${response.promptFeedback.blockReason}`);
-    }
-
-    const imagePartFromResponse = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
-
-    if (imagePartFromResponse?.inlineData) {
-        const { mimeType, data } = imagePartFromResponse.inlineData;
-        return `data:${mimeType};base64,${data}`;
-    }
-
-    const finishReason = response.candidates?.[0]?.finishReason;
-    if (finishReason && finishReason !== 'STOP' && finishReason !== 'MAX_TOKENS') {
-        throw new Error(`AI stopped: ${finishReason}`);
-    }
-    
-    const textFeedback = response.text?.trim();
-    throw new Error(`No image returned. AI said: "${textFeedback || 'Unknown error'}"`);
+const handleSingleApiResponse = (response: GenerateContentResponse): string => {
+    if (response.promptFeedback?.blockReason) throw new Error(`Blocked: ${response.promptFeedback.blockReason}`);
+    const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
+    if (imagePart?.inlineData) return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+    throw new Error(`No image returned. AI said: "${response.text?.trim() || 'Unknown error'}"`);
 };
 
+// --- FEATURE IMPLEMENTATIONS ---
 
 export const generateEditedImage = async (
     originalImage: string,
@@ -341,19 +234,26 @@ export const generateEditedImage = async (
     maskImage: File
 ): Promise<string> => {
     return timedApiCall('retouch', { prompt: userPrompt }, async () => {
-        
-        const ai = getAiClient();
-        const originalImagePart = dataUrlToPart(originalImage);
-        const maskImagePart = await fileToPart(maskImage);
-        const systemPrompt = `You are a precision digital artist. Edit the image based on the prompt ONLY in the white areas of the mask. The black areas of the mask must remain completely untouched. The edit must be seamless and hyper-realistic.`;
-        const prompt = `${systemPrompt}\n\nUser's request: "${userPrompt}"`;
+        if (getApiProvider() === 'together') {
+            // NOTE: TogetherAI Inpainting logic (using FLUX Fill if available, or fallback)
+            // This is a complex implementation as generic APIs differ. 
+            // Currently throwing specific message or implementing basic text-to-image as fallback
+            // For now, implementing as "New Image with hint" because true Inpainting API on Together varies.
+            // Using FLUX Fill Logic if available in their API docs, otherwise standard gen.
+            
+            // Assuming standard Flux Fill via Images Endpoint or similar. 
+            // Since pure API structure varies, we'll try to simulate or warn.
+            throw new Error("TogetherAI Inpainting (Masking) is not fully supported in this demo yet. Please use Google provider for precise masking.");
+        }
 
-        const response = await generateWithModel(ai, {
-            contents: { parts: [originalImagePart, maskImagePart, { text: prompt }] },
+        // GOOGLE
+        const ai = getAiClient();
+        const response = await ai.models.generateContent({
+            model: PRIMARY_IMAGE_MODEL,
+            contents: { parts: [dataUrlToPart(originalImage), await fileToPart(maskImage), { text: userPrompt }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
-
-        return handleSingleApiResponse(response, 'edit');
+        return handleSingleApiResponse(response);
     });
 };
 
@@ -362,18 +262,18 @@ export const generateBackgroundAlteredImage = async (
     alterationPrompt: string
 ): Promise<string> => {
     return timedApiCall('background', { prompt: alterationPrompt }, async () => {
+        if (getApiProvider() === 'together') {
+             throw new Error("Background removal/replacement requires Google provider.");
+        }
 
         const ai = getAiClient();
         const systemPrompt = `Isolate the main subject and replace the background. Subject must be preserved perfectly. The new background should realistically match the subject's lighting and perspective.`;
-        const finalPrompt = `${systemPrompt}\n\nUser's request: "${alterationPrompt}"`;
-        const originalImagePart = dataUrlToPart(originalImage);
-
-        const response = await generateWithModel(ai, {
-            contents: { parts: [originalImagePart, { text: finalPrompt }] },
+        const response = await ai.models.generateContent({
+            model: PRIMARY_IMAGE_MODEL,
+            contents: { parts: [dataUrlToPart(originalImage), { text: `${systemPrompt}\n\nUser's request: "${alterationPrompt}"` }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
-        
-        return handleSingleApiResponse(response, 'background');
+        return handleSingleApiResponse(response);
     });
 };
 
@@ -382,6 +282,22 @@ export const getAssistantResponse = async (
     newMessage: string
 ): Promise<string> => {
     try {
+        if (getApiProvider() === 'together') {
+            const messages = history.map(h => ({
+                role: h.role,
+                content: h.parts[0].text
+            }));
+            messages.push({ role: 'user', content: newMessage });
+
+            const data = await callTogetherAI('chat/completions', {
+                model: TOGETHER_TEXT_MODEL,
+                messages: messages,
+                max_tokens: 512,
+                temperature: 0.7
+            });
+            return data.choices[0].message.content || "No response";
+        }
+
         const ai = getAiClient();
         const chat = ai.chats.create({
             model: TEXT_MODEL,
@@ -399,13 +315,27 @@ export const generateImageFromText = async (
     prompt: string
 ): Promise<string> => {
     return timedApiCall('generateImage', { prompt }, async () => {
+        if (getApiProvider() === 'together') {
+            const data = await callTogetherAI('images/generations', {
+                model: TOGETHER_IMAGE_MODEL,
+                prompt: prompt,
+                width: 1024,
+                height: 1024,
+                steps: 4, // Schnell is fast
+                n: 1,
+                response_format: 'b64_json'
+            });
+            const b64 = data.data[0].b64_json;
+            return `data:image/jpeg;base64,${b64}`;
+        }
 
         const ai = getAiClient();
-        const response = await generateWithModel(ai, {
+        const response = await ai.models.generateContent({
+            model: PRIMARY_IMAGE_MODEL,
             contents: { parts: [{ text: prompt }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
-        return handleSingleApiResponse(response, 'generate image');
+        return handleSingleApiResponse(response);
     });
 };
 
@@ -415,24 +345,26 @@ export const generateLogo = async (
     backgroundImageDataUrl?: string | null
 ): Promise<string> => {
     return timedApiCall('generateLogo', { prompt: userPrompt }, async () => {
+        if (getApiProvider() === 'together') {
+             // For simplicity, using Flux Text-to-Image for logos too
+             return generateImageFromText(`Professional logo design, vector style, minimalistic, ${userPrompt}`);
+        }
 
         const ai = getAiClient();
         let systemPrompt = !existingLogoDataUrl && !backgroundImageDataUrl 
             ? `You are a professional logo designer AI. Create a unique, high-quality logo based on the user's description. Focus on symbolic iconography.`
             : `You are a professional logo designer AI. Modify the existing logo or place a new logo on the provided background based on the user's description.`;
         
-        const prompt = `${systemPrompt}\n\nUser's request: "${userPrompt}"`;
-        let parts: any[] = [{ text: prompt }];
-
+        let parts: any[] = [{ text: `${systemPrompt}\n\nUser's request: "${userPrompt}"` }];
         if (backgroundImageDataUrl) parts.unshift(dataUrlToPart(backgroundImageDataUrl));
         else if (existingLogoDataUrl) parts.unshift(dataUrlToPart(existingLogoDataUrl));
 
-        const response = await generateWithModel(ai, {
+        const response = await ai.models.generateContent({
+            model: PRIMARY_IMAGE_MODEL,
             contents: { parts: parts },
             config: { responseModalities: [Modality.IMAGE] },
         });
-
-        return handleSingleApiResponse(response, 'logo generation');
+        return handleSingleApiResponse(response);
     });
 };
 
@@ -441,14 +373,18 @@ export const generateMagicEdit = async (
     userPrompt: string
 ): Promise<string> => {
     return timedApiCall('magicEdit', { prompt: userPrompt }, async () => {
+        if (getApiProvider() === 'together') {
+             // Use Google for complex edits for now
+             throw new Error("For magic editing, please switch to Google provider in settings.");
+        }
 
         const ai = getAiClient();
-        const originalImagePart = dataUrlToPart(originalImage);
-        const response = await generateWithModel(ai, {
-            contents: { parts: [originalImagePart, { text: userPrompt }] },
+        const response = await ai.models.generateContent({
+            model: PRIMARY_IMAGE_MODEL,
+            contents: { parts: [dataUrlToPart(originalImage), { text: userPrompt }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
-        return handleSingleApiResponse(response, 'magic edit');
+        return handleSingleApiResponse(response);
     });
 };
 
@@ -458,15 +394,15 @@ export const composeImages = async (
     userPrompt: string
 ): Promise<string> => {
     return timedApiCall('composeImages', { prompt: userPrompt }, async () => {
+        if (getApiProvider() === 'together') throw new Error("Image composition requires Google provider.");
 
         const ai = getAiClient();
-        const originalImagePart = dataUrlToPart(originalImage);
-        const secondImagePart = dataUrlToPart(secondImage);
-        const response = await generateWithModel(ai, {
-            contents: { parts: [originalImagePart, secondImagePart, { text: userPrompt }] },
+        const response = await ai.models.generateContent({
+            model: PRIMARY_IMAGE_MODEL,
+            contents: { parts: [dataUrlToPart(originalImage), dataUrlToPart(secondImage), { text: userPrompt }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
-        return handleSingleApiResponse(response, 'image composition');
+        return handleSingleApiResponse(response);
     });
 };
 
@@ -474,8 +410,23 @@ export const enhancePrompt = async (
     userPrompt: string,
     image?: string | null
 ): Promise<string> => {
-    // Enhance prompt always uses the text model capabilities
     return timedApiCall('enhancePrompt', { prompt: userPrompt, hasImage: !!image }, async () => {
+        
+        if (getApiProvider() === 'together') {
+             const data = await callTogetherAI('chat/completions', {
+                model: TOGETHER_TEXT_MODEL,
+                messages: [{ 
+                    role: 'system', 
+                    content: 'You are a prompt engineering expert. Expand the user\'s brief idea into a detailed prompt for high-quality image generation (FLUX). Respond ONLY with the enhanced prompt.' 
+                }, {
+                    role: 'user',
+                    content: userPrompt
+                }],
+                max_tokens: 200
+            });
+            return data.choices[0].message.content || userPrompt;
+        }
+
         const ai = getAiClient(); 
         const parts: any[] = [{ text: userPrompt }];
         let systemInstruction = `You are a prompt engineering expert. Expand the user's brief idea into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
@@ -485,12 +436,11 @@ export const enhancePrompt = async (
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
         }
         
-        // Using text generation on the same client, switched to 2.5 flash
-        const response = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
-            model: TEXT_MODEL, // Switched for better quota handling
+        const response = await ai.models.generateContent({
+            model: TEXT_MODEL,
             contents: { parts: parts },
             config: { systemInstruction: systemInstruction },
-        }));
+        });
 
         const enhanced = response.text?.trim();
         if (!enhanced) throw new Error("The AI could not enhance the prompt.");
@@ -499,6 +449,7 @@ export const enhancePrompt = async (
 };
 
 // --- Supabase Storage ---
+// (Kept same as before)
 export interface SupabaseStoredImage {
     url: string;
     name: string;
@@ -556,7 +507,6 @@ export const deleteGeneratedImage = async (action: { id: string, details: { imag
     }
 
     try {
-        // Capture database locally to ensure TS knows it exists
         const db = database;
         if (!db) throw new Error("Firebase is not configured.");
         await remove(ref(db, `actions/${actionId}`));
