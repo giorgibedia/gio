@@ -18,8 +18,8 @@ const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
 // OpenRouter Configuration
 // LIST OF KEYS provided by user. The app will rotate through these if one is exhausted.
 const OPENROUTER_API_KEYS = [
-    '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', // Key 1 (Primary)
-    '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'  // Key 2 (Backup)
+    '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', // Key 1
+    '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'  // Key 2
 ];
 
 // Using the specific model ID requested by user for OpenRouter
@@ -185,7 +185,9 @@ const executeOpenRouterRequest = async (
         });
     });
 
-    const siteUrl = "https://pixai.app";
+    // Use dynamic site URL to fix 401 errors on Vercel vs Localhost
+    // OpenRouter often checks the Referer header matching.
+    const siteUrl = typeof window !== 'undefined' ? window.location.origin : "https://pixai.app";
     const siteTitle = "PixAI";
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -231,6 +233,10 @@ const executeOpenRouterRequest = async (
         }
         if (response.status === 429) {
             throw new Error("RATE_LIMITED"); 
+        }
+        // "User not found" often means the key is invalid or header format is rejected by the specific provider
+        if (response.status === 401 && errMsg.includes('User not found')) {
+             throw new Error("AUTH_FAILED"); 
         }
         
         throw new Error(errMsg);
@@ -326,15 +332,17 @@ const callOpenRouter = async (
             lastError = error;
             const errMsg = error.message || error.toString();
             
-            // Check if error is related to quota or limits
-            const isQuotaError = errMsg.includes("QUOTA_EXHAUSTED") || 
-                                 errMsg.includes("RATE_LIMITED") || 
-                                 errMsg.toLowerCase().includes("credits") ||
-                                 errMsg.includes("402") ||
-                                 errMsg.includes("429");
+            // Check if error is related to quota or limits or auth failure (invalid key)
+            const isRecoverableError = errMsg.includes("QUOTA_EXHAUSTED") || 
+                                       errMsg.includes("RATE_LIMITED") || 
+                                       errMsg.includes("AUTH_FAILED") ||
+                                       errMsg.toLowerCase().includes("credits") ||
+                                       errMsg.includes("402") ||
+                                       errMsg.includes("429") ||
+                                       errMsg.includes("401");
 
-            if (isQuotaError) {
-                console.warn(`OpenRouter Key #${i + 1} exhausted or limited. Trying next key...`);
+            if (isRecoverableError) {
+                console.warn(`OpenRouter Key #${i + 1} failed (${errMsg}). Trying next key...`);
                 // Continue to next iteration (next key)
                 continue;
             } else {
@@ -348,7 +356,7 @@ const callOpenRouter = async (
 
     // If we run out of keys
     console.error("All OpenRouter keys exhausted.");
-    throw new Error("All OpenRouter API keys are exhausted. Please try again later or update keys.");
+    throw new Error("All OpenRouter API keys are exhausted. Please try again later.");
 };
 
 
