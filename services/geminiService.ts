@@ -16,8 +16,12 @@ const PRIMARY_IMAGE_MODEL = 'gemini-3-pro-image-preview';
 const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
 
 // OpenRouter Configuration
-// Key provided by user for Gemini 2.5 Flash / 2.0 Flash Exp usage
-const OPENROUTER_API_KEY = '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';
+// LIST OF KEYS provided by user. The app will rotate through these if one is exhausted.
+const OPENROUTER_API_KEYS = [
+    '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', // Key 1 (Primary)
+    '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'  // Key 2 (Backup)
+];
+
 // Using the specific model ID requested by user for OpenRouter
 const OPENROUTER_MODEL = 'google/gemini-2.5-flash-image';
 
@@ -164,128 +168,187 @@ const generateWithFallback = async (
 };
 
 /**
- * OpenRouter API Call wrapper
+ * Executes a single request to OpenRouter with a specific key.
+ */
+const executeOpenRouterRequest = async (
+    apiKey: string,
+    prompt: string, 
+    images: string[]
+): Promise<string> => {
+    const content: any[] = [{ type: "text", text: prompt }];
+    
+    // Add images to content
+    images.forEach(img => {
+        content.push({
+            type: "image_url",
+            image_url: { url: img }
+        });
+    });
+
+    const siteUrl = "https://pixai.app";
+    const siteTitle = "PixAI";
+
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${apiKey.trim()}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": siteUrl, 
+            "X-Title": siteTitle
+        },
+        body: JSON.stringify({
+            model: OPENROUTER_MODEL,
+            messages: [
+                {
+                    role: "user",
+                    content: content
+                }
+            ],
+            temperature: 0.7,
+            max_tokens: 1000,
+            stream: false
+        })
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        let errMsg = `OpenRouter Error (${response.status}): ${response.statusText}`;
+        
+        try {
+            const errData = JSON.parse(errText);
+            if (errData.error?.message) {
+                errMsg = errData.error.message;
+            } else if (errData.error) {
+                errMsg = JSON.stringify(errData.error);
+            }
+        } catch (e) {
+            errMsg += ` - Details: ${errText.substring(0, 100)}`;
+        }
+        
+        // Return errors that should trigger a key switch as specific messages
+        if (response.status === 402 || errMsg.toLowerCase().includes('credits') || errMsg.toLowerCase().includes('balance') || errMsg.toLowerCase().includes('quota')) {
+            throw new Error("QUOTA_EXHAUSTED");
+        }
+        if (response.status === 429) {
+            throw new Error("RATE_LIMITED"); 
+        }
+        
+        throw new Error(errMsg);
+    }
+
+    const data = await response.json();
+    console.log("OpenRouter Response Full Data:", data); 
+
+    const choice = data.choices?.[0];
+    let resultText = "";
+
+    // 1. Check for structured images array (common in some OpenRouter google integrations)
+    if (choice?.message?.images?.length > 0) {
+        const image = choice.message.images[0];
+        // Check for nested image_url object
+        if (image.image_url?.url) return image.image_url.url;
+        // Check for direct url property
+        if (image.url) return image.url;
+    }
+
+    // 2. Check for multimodal content array
+    if (choice?.message?.content) {
+        if (typeof choice.message.content === 'string') {
+            resultText = choice.message.content;
+        } else if (Array.isArray(choice.message.content)) {
+            resultText = choice.message.content
+                .map((part: any) => {
+                        if (part.text) return part.text;
+                        if (part.image_url?.url) return `![](${part.image_url.url})`;
+                        return '';
+                })
+                .join('\n');
+        }
+    }
+
+    if (!resultText) {
+        // If usage indicates an image was generated but we can't find it, that's an error.
+        if (data.usage?.completion_tokens > 0 || data.usage?.native_tokens_completion_images > 0) {
+             console.error("OpenRouter Empty Content Response (but tokens used):", JSON.stringify(data, null, 2));
+             throw new Error("The model generated an image but OpenRouter did not return the image data in the response text.");
+        }
+        throw new Error("OpenRouter returned no content.");
+    }
+    
+    // 3. Markdown image match: ![alt](url)
+    const markdownImageMatch = resultText.match(/!\[.*?\]\((.*?)\)/);
+    if (markdownImageMatch && markdownImageMatch[1]) {
+        return markdownImageMatch[1];
+    }
+
+    // 4. More permissive URL matching to catch signed URLs or URLs with params
+    const urlMatch = resultText.match(/(https?:\/\/[^\s<>"')]+)/);
+    if (urlMatch) {
+            const url = urlMatch[0];
+            const hasImageExt = ['.png', '.jpg', '.jpeg', '.webp', '.gif'].some(ext => url.toLowerCase().includes(ext));
+            const isStorageUrl = url.includes('storage.googleapis.com') || url.includes('amazonaws.com') || url.includes('usercontent') || url.includes('fal.media');
+            
+            if (hasImageExt || isStorageUrl || resultText.length < 500) {
+                return url;
+            }
+    }
+    
+    // Fallback: If result is short and doesn't look like image data, throw
+    if (resultText.length < 200 && !resultText.startsWith('data:')) {
+            console.warn("OpenRouter Text Response (Not Image):", resultText);
+            throw new Error("The OpenRouter model returned text instead of an image.");
+    }
+    
+    return resultText;
+}
+
+/**
+ * OpenRouter API Call wrapper with Key Rotation
  */
 const callOpenRouter = async (
     prompt: string, 
     images: string[] = [] // Base64 data URLs
 ): Promise<string> => {
-    try {
-        if (!OPENROUTER_API_KEY) {
-            throw new Error("OpenRouter API Key is not configured. Please switch to Google Provider or configure the key.");
-        }
-
-        const content: any[] = [{ type: "text", text: prompt }];
-        
-        // Add images to content
-        images.forEach(img => {
-            content.push({
-                type: "image_url",
-                image_url: { url: img }
-            });
-        });
-
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://pixai.app", // Fixed: Required by OpenRouter, must be a URL
-                "X-Title": "PixAI" // Fixed: Required by OpenRouter
-            },
-            body: JSON.stringify({
-                model: OPENROUTER_MODEL,
-                messages: [
-                    {
-                        role: "user",
-                        content: content
-                    }
-                ],
-                // Attempting to force the model to provide useful output even if it generates an image natively
-                temperature: 0.7,
-                max_tokens: 1000, 
-            })
-        });
-
-        if (!response.ok) {
-            const errText = await response.text();
-            let errMsg = `OpenRouter Error (${response.status}): ${response.statusText}`;
-            
-            try {
-                const errData = JSON.parse(errText);
-                if (errData.error?.message) {
-                    errMsg = errData.error.message;
-                } else if (errData.error) {
-                    errMsg = JSON.stringify(errData.error);
-                }
-            } catch (e) {
-                // If JSON parse fails, append raw text
-                errMsg += ` - Details: ${errText.substring(0, 100)}`;
-            }
-            
-            // Handle credit/quota errors specifically
-            if (response.status === 402 || errMsg.toLowerCase().includes('credits') || errMsg.toLowerCase().includes('balance')) {
-                throw new Error("OpenRouter credits exhausted. Please recharge or try again later.");
-            }
-            
-            throw new Error(errMsg);
-        }
-
-        const data = await response.json();
-        const choice = data.choices?.[0];
-        let resultText = "";
-
-        // Robust content extraction for multimodal responses
-        if (choice?.message?.content) {
-            if (typeof choice.message.content === 'string') {
-                resultText = choice.message.content;
-            } else if (Array.isArray(choice.message.content)) {
-                // Handle multimodal output array if present (text + image_url parts)
-                resultText = choice.message.content
-                    .map((part: any) => {
-                         if (part.text) return part.text;
-                         if (part.image_url?.url) return `![](${part.image_url.url})`;
-                         return '';
-                    })
-                    .join('\n');
-            }
-        }
-
-        if (!resultText) {
-            console.error("OpenRouter Empty Content Response:", JSON.stringify(data, null, 2));
-            // Check if there is an image in a non-standard location or if tokens were consumed
-            if (data.usage?.completion_tokens > 0 || data.usage?.native_tokens_completion_images > 0) {
-                 // Try to fallback to Google provider logic automatically if user allows, but here we must return error
-                 throw new Error("The model generated an image but OpenRouter did not return the image data in the response text.");
-            }
-            throw new Error("OpenRouter returned no content. The model may have refused the request.");
-        }
-        
-        // Attempt to find a markdown image or just return text if it seems to be a URL
-        // Regex for markdown image: ![alt](url)
-        const markdownImageMatch = resultText.match(/!\[.*?\]\((.*?)\)/);
-        if (markdownImageMatch && markdownImageMatch[1]) {
-            return markdownImageMatch[1];
-        }
-
-        // Regex for raw URL (http/s)
-        const urlMatch = resultText.match(/(https?:\/\/[^\s]+)/);
-        if (urlMatch && (urlMatch[0].endsWith('.png') || urlMatch[0].endsWith('.jpg') || urlMatch[0].endsWith('.webp'))) {
-             return urlMatch[0];
-        }
-        
-        // Fallback: If result is short and doesn't look like image data, throw
-        if (resultText.length < 200 && !resultText.startsWith('data:')) {
-             console.warn("OpenRouter Text Response (Not Image):", resultText);
-             throw new Error("The OpenRouter model returned text instead of an image. Try changing your prompt or check if the selected model supports image generation.");
-        }
-        
-        return resultText;
-
-    } catch (error) {
-        console.error("OpenRouter Call Failed:", error);
-        throw error;
+    if (!OPENROUTER_API_KEYS || OPENROUTER_API_KEYS.length === 0) {
+        throw new Error("OpenRouter API Key is not configured.");
     }
+
+    let lastError: any;
+
+    // Loop through available keys
+    for (let i = 0; i < OPENROUTER_API_KEYS.length; i++) {
+        const currentKey = OPENROUTER_API_KEYS[i];
+        
+        try {
+            if (i > 0) console.log(`Switching to OpenRouter Key #${i + 1}...`);
+            return await executeOpenRouterRequest(currentKey, prompt, images);
+        } catch (error: any) {
+            lastError = error;
+            const errMsg = error.message || error.toString();
+            
+            // Check if error is related to quota or limits
+            const isQuotaError = errMsg.includes("QUOTA_EXHAUSTED") || 
+                                 errMsg.includes("RATE_LIMITED") || 
+                                 errMsg.toLowerCase().includes("credits") ||
+                                 errMsg.includes("402") ||
+                                 errMsg.includes("429");
+
+            if (isQuotaError) {
+                console.warn(`OpenRouter Key #${i + 1} exhausted or limited. Trying next key...`);
+                // Continue to next iteration (next key)
+                continue;
+            } else {
+                // If it's a different error (e.g. model refused, parsing error), throw immediately
+                // don't waste other keys on a bad request.
+                console.error(`OpenRouter Call Failed (Key #${i+1}):`, error);
+                throw error;
+            }
+        }
+    }
+
+    // If we run out of keys
+    console.error("All OpenRouter keys exhausted.");
+    throw new Error("All OpenRouter API keys are exhausted. Please try again later or update keys.");
 };
 
 
