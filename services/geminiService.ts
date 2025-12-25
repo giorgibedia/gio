@@ -10,12 +10,12 @@ import { supabase } from './supabaseClient';
 import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 
-// Configuration for Gemini Models - Using Gemini 2.5 Flash Image for speed and stability
+// Configuration for Gemini Models - Using Gemini 2.5 Flash Image
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image'; 
 
 // --- HARDCODED API KEY ---
-// გასაღები ჩაწერილა პირდაპირ აქ. Vercel-ის ცვლადები აღარ გამოიყენება.
-const MASTER_API_KEY = "AIzaSyAOXp0jHSLG-BQV6W7QJ4BnsDmWQVRlRwI"; 
+// ეს გასაღები პირდაპირ არის ჩაწერილი. Vercel-ის ცვლადები აღარ მოწმდება.
+const DIRECT_API_KEY = "AIzaSyAOXp0jHSLG-BQV6W7QJ4BnsDmWQVRlRwI"; 
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -40,14 +40,8 @@ export const isMobileApp = (): boolean => {
  * Uses the HARDCODED key directly.
  */
 const getAiClient = (): GoogleGenAI => {
-    // Directly use the hardcoded key.
-    const apiKey = MASTER_API_KEY;
-
-    if (!apiKey || apiKey.trim() === '') {
-        console.error("Critical Error: MASTER_API_KEY is empty in geminiService.ts");
-        throw new Error("API Key is missing. Please open services/geminiService.ts and paste your key into MASTER_API_KEY.");
-    }
-    return new GoogleGenAI({ apiKey });
+    // პირდაპირ ვიყენებთ გასაღებს, არანაირი process.env შემოწმება
+    return new GoogleGenAI({ apiKey: DIRECT_API_KEY });
 };
 
 /**
