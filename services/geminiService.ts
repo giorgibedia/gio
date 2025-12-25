@@ -10,12 +10,12 @@ import { supabase } from './supabaseClient';
 import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 
-// Configuration for Gemini Models - Switched to Gemini 2.5 Flash Image
+// Configuration for Gemini Models - Using Gemini 2.5 Flash Image for speed and stability
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image'; 
 
-// fallback key is removed for security. Please set API_KEY in Vercel Environment Variables.
-// If you are stuck with Vercel, you can temporarily paste your key inside the quotes below.
-const MASTER_API_KEY = ""; 
+// --- HARDCODED API KEY ---
+// გასაღები ჩაწერილა პირდაპირ აქ. Vercel-ის ცვლადები აღარ გამოიყენება.
+const MASTER_API_KEY = "AIzaSyAOXp0jHSLG-BQV6W7QJ4BnsDmWQVRlRwI"; 
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -37,21 +37,15 @@ export const isMobileApp = (): boolean => {
 
 /**
  * A robust way to get the Gemini AI client.
- * Prioritizes Vercel Environment Variable.
+ * Uses the HARDCODED key directly.
  */
 const getAiClient = (): GoogleGenAI => {
-    // 1. Try to get key from process.env (injected via vite.config.ts)
-    const envKey = process.env.API_KEY;
-    
-    // 2. Determine which key to use. 
-    const apiKey = (envKey && typeof envKey === 'string' && envKey.length > 10) 
-        ? envKey 
-        : MASTER_API_KEY;
+    // Directly use the hardcoded key.
+    const apiKey = MASTER_API_KEY;
 
-    if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
-        const errorMessage = "API Key missing. 1. Add 'API_KEY' to Vercel Env Vars. 2. REDEPLOY.";
-        console.error("Critical Error: API Key is missing.");
-        throw new Error(errorMessage);
+    if (!apiKey || apiKey.trim() === '') {
+        console.error("Critical Error: MASTER_API_KEY is empty in geminiService.ts");
+        throw new Error("API Key is missing. Please open services/geminiService.ts and paste your key into MASTER_API_KEY.");
     }
     return new GoogleGenAI({ apiKey });
 };
@@ -124,7 +118,7 @@ const retryOperation = async <T>(
             
             // Check for specific Leaked Key / Permission Denied error
             if (errString.includes("leaked") || (errString.includes("403") && errString.includes("key"))) {
-                 throw new Error("CRITICAL: Your API Key was reported as leaked and blocked. Please generate a NEW key, update Vercel Env Vars, and REDEPLOY.");
+                 throw new Error("CRITICAL: Your API Key is blocked/leaked. Please generate a NEW key and paste it into services/geminiService.ts");
             }
 
             const isRateLimit = errString.includes('429') || errString.includes('RESOURCE_EXHAUSTED') || errString.includes('quota');
