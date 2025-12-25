@@ -25,14 +25,14 @@ const ModelSelector: React.FC = () => {
                 return (
                     <div className="flex items-center gap-2 text-[var(--color-primary-300)] animate-pulse">
                         <SparkleIcon className="w-4 h-4" />
-                        <span className="text-xs font-semibold">Connecting to Gemini 3 Pro...</span>
+                        <span className="text-xs font-semibold">Connecting...</span>
                     </div>
                 );
             case 'verified':
                 return (
                     <div className="flex items-center gap-2 text-green-400">
                         <CheckCircleIcon className="w-4 h-4" />
-                        <span className="text-xs font-bold tracking-wide">Gemini 3 Pro Active</span>
+                        <span className="text-xs font-bold tracking-wide">Gemini 2.5 Active</span>
                     </div>
                 );
             case 'denied':

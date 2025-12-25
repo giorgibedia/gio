@@ -10,10 +10,11 @@ import { supabase } from './supabaseClient';
 import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 
-// Configuration for Gemini Models - Upgraded to Gemini 3 Pro
-const PRIMARY_IMAGE_MODEL = 'gemini-3-pro-image-preview'; 
+// Configuration for Gemini Models - Switched to Gemini 2.5 Flash Image
+const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image'; 
 
 // fallback key is removed for security. Please set API_KEY in Vercel Environment Variables.
+// If you are stuck with Vercel, you can temporarily paste your key inside the quotes below.
 const MASTER_API_KEY = ""; 
 
 // Helper to convert a data URL string to a File object for saving.
@@ -39,7 +40,7 @@ export const isMobileApp = (): boolean => {
  * Prioritizes Vercel Environment Variable.
  */
 const getAiClient = (): GoogleGenAI => {
-    // 1. Try to get key from Vercel/System Environment (injected via vite.config.ts)
+    // 1. Try to get key from process.env (injected via vite.config.ts)
     const envKey = process.env.API_KEY;
     
     // 2. Determine which key to use. 
@@ -48,7 +49,7 @@ const getAiClient = (): GoogleGenAI => {
         : MASTER_API_KEY;
 
     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
-        const errorMessage = "API Key missing. Add 'API_KEY' to Vercel Environment Variables.";
+        const errorMessage = "API Key missing. 1. Add 'API_KEY' to Vercel Env Vars. 2. REDEPLOY.";
         console.error("Critical Error: API Key is missing.");
         throw new Error(errorMessage);
     }
@@ -56,20 +57,20 @@ const getAiClient = (): GoogleGenAI => {
 };
 
 /**
- * Verifies if the configured API key has access to Gemini 3 Pro.
+ * Verifies if the configured API key has access to Gemini.
  * Used for UI status indication.
  */
 export const verifyGeminiAccess = async (): Promise<boolean> => {
     try {
         const ai = getAiClient();
-        // Use a lightweight text request to the preview model to check access/billing
+        // Use a lightweight text request to the flash model to check access/billing
         await ai.models.generateContent({
-            model: 'gemini-3-pro-preview',
+            model: 'gemini-2.5-flash',
             contents: { parts: [{ text: 'ping' }] },
         });
         return true;
     } catch (error) {
-        console.error("Gemini 3 Access Verification Failed:", error);
+        console.error("Gemini Access Verification Failed:", error);
         return false;
     }
 };
@@ -123,7 +124,7 @@ const retryOperation = async <T>(
             
             // Check for specific Leaked Key / Permission Denied error
             if (errString.includes("leaked") || (errString.includes("403") && errString.includes("key"))) {
-                 throw new Error("CRITICAL: Your API Key was reported as leaked and blocked by Google. Please generate a NEW key and update Vercel Environment Variables.");
+                 throw new Error("CRITICAL: Your API Key was reported as leaked and blocked. Please generate a NEW key, update Vercel Env Vars, and REDEPLOY.");
             }
 
             const isRateLimit = errString.includes('429') || errString.includes('RESOURCE_EXHAUSTED') || errString.includes('quota');
@@ -330,7 +331,18 @@ export const getAssistantResponse = async (
     history: any[],
     newMessage: string
 ): Promise<string> => {
-    return "Assistant is currently disabled.";
+    try {
+        const ai = getAiClient();
+        const chat = ai.chats.create({
+            model: 'gemini-2.5-flash',
+            history: history,
+        });
+        const result = await chat.sendMessage({ message: newMessage });
+        return result.text || "I'm not sure how to respond to that.";
+    } catch (e) {
+        console.error("Assistant error", e);
+        return "Sorry, I'm having trouble connecting right now.";
+    }
 };
 
 export const generateImageFromText = async (
@@ -423,9 +435,9 @@ export const enhancePrompt = async (
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
         }
         
-        // Using text generation on the same client, upgraded to pro
+        // Using text generation on the same client, switched to 2.5 flash
         const response = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
-            model: 'gemini-3-pro-preview', // Use pro for reasoning
+            model: 'gemini-2.5-flash', // Switched for better quota handling
             contents: { parts: parts },
             config: { systemInstruction: systemInstruction },
         }));

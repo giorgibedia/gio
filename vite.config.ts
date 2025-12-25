@@ -8,13 +8,14 @@ export default defineConfig(({ mode }) => {
   // Set the third parameter to '' to load all env regardless of the `VITE_` prefix.
   const env = loadEnv(mode, (process as any).cwd(), '');
   
+  // Prioritize VITE_API_KEY if exists, otherwise API_KEY
+  const apiKey = process.env.VITE_API_KEY || process.env.API_KEY || env.VITE_API_KEY || env.API_KEY || "";
+
   return {
     plugins: [react()],
     define: {
-      // Robustly define process.env.API_KEY.
-      // It checks Vercel's system env first, then the loaded .env file.
-      // If neither exists, it defaults to an empty string (handled in geminiService.ts).
-      'process.env.API_KEY': JSON.stringify(process.env.API_KEY || env.API_KEY || ""),
+      // Inject API_KEY. We also support VITE_API_KEY as a standard Vite fallback.
+      'process.env.API_KEY': JSON.stringify(apiKey),
     },
     build: {
       outDir: 'dist',
