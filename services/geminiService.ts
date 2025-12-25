@@ -10,8 +10,11 @@ import { supabase } from './supabaseClient';
 import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 
-// Configuration for Gemini 3 Pro
+// Configuration for Gemini Models - Strictly using Gemini 3 Pro
 const PRIMARY_IMAGE_MODEL = 'gemini-3-pro-image-preview'; 
+
+// The specific key requested by the user for ALL operations
+const MASTER_API_KEY = "AIzaSyC6KcojG7D2Uq_lHryo9c3v6wmuDtT9Rm0";
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -33,19 +36,11 @@ export const isMobileApp = (): boolean => {
 
 /**
  * A robust way to get the Gemini AI client.
+ * Uses the single master key for everything.
  */
 const getAiClient = (): GoogleGenAI => {
-    // 1. Try to get key from Environment Variables (Secure & Recommended for Vercel/Local)
-    let apiKey = process.env.API_KEY;
-
-    // 2. Fallback: If no Env Var found (e.g. mobile build, or user hasn't set up Vercel envs),
-    // use the provided production key.
-    if (!apiKey || apiKey === 'undefined' || apiKey === '') {
-        const k1 = "AIzaSyAHBNSNC6";
-        const k2 = "AAPiQqzyMeM-";
-        const k3 = "X2eMlfsQiCzEs";
-        apiKey = `${k1}${k2}${k3}`;
-    }
+    // Strictly use the provided master key for everything
+    const apiKey = MASTER_API_KEY;
 
     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
         const errorMessage = "API Key is not configured. Please reload.";
@@ -53,6 +48,25 @@ const getAiClient = (): GoogleGenAI => {
         throw new Error(errorMessage);
     }
     return new GoogleGenAI({ apiKey });
+};
+
+/**
+ * Verifies if the configured API key has access to Gemini 3 Pro.
+ * Used for UI status indication.
+ */
+export const verifyGeminiAccess = async (): Promise<boolean> => {
+    try {
+        const ai = getAiClient();
+        // Use a lightweight text request to the preview model to check access/billing
+        await ai.models.generateContent({
+            model: 'gemini-3-pro-preview',
+            contents: { parts: [{ text: 'ping' }] },
+        });
+        return true;
+    } catch (error) {
+        console.error("Gemini 3 Access Verification Failed:", error);
+        return false;
+    }
 };
 
 /**
@@ -126,7 +140,7 @@ const retryOperation = async <T>(
 };
 
 /**
- * Executes a generation request using the primary model.
+ * Executes a generation request using the specified model.
  */
 const generateWithModel = async (
     ai: GoogleGenAI, 
@@ -152,7 +166,7 @@ const timedApiCall = async <T>(
         const result = await apiCall();
         const duration = (Date.now() - startTime) / 1000;
         
-        const augmentedDetails = { ...details, duration };
+        const augmentedDetails = { ...details, duration, model: PRIMARY_IMAGE_MODEL };
         logAction(featureName, augmentedDetails);
 
         if (typeof result === 'string' && (result.startsWith('data:image') || result.startsWith('http'))) {
@@ -163,7 +177,6 @@ const timedApiCall = async <T>(
                     let imageFile: File;
                     
                     if (result.startsWith('http')) {
-                        // For URLs (OpenRouter - kept for backward compat if any logic remains, though logic removed), fetch blob first
                         const res = await fetch(result);
                         const blob = await res.blob();
                         imageFile = new File([blob], filename, { type: blob.type });
@@ -192,7 +205,8 @@ const timedApiCall = async <T>(
                     logAction('generation', {
                         imageUrl: publicUrl,
                         prompt: details?.prompt,
-                        originalFeature: featureName
+                        originalFeature: featureName,
+                        model: PRIMARY_IMAGE_MODEL
                     });
 
                 } catch (e) {
@@ -265,9 +279,8 @@ export const generateEditedImage = async (
     userPrompt: string,
     maskImage: File
 ): Promise<string> => {
-    return timedApiCall('retouch', { prompt: userPrompt, provider: 'google' }, async () => {
+    return timedApiCall('retouch', { prompt: userPrompt }, async () => {
         
-        // Google Logic
         const ai = getAiClient();
         const originalImagePart = dataUrlToPart(originalImage);
         const maskImagePart = await fileToPart(maskImage);
@@ -287,7 +300,7 @@ export const generateBackgroundAlteredImage = async (
     originalImage: string,
     alterationPrompt: string
 ): Promise<string> => {
-    return timedApiCall('background', { prompt: alterationPrompt, provider: 'google' }, async () => {
+    return timedApiCall('background', { prompt: alterationPrompt }, async () => {
 
         const ai = getAiClient();
         const systemPrompt = `Isolate the main subject and replace the background. Subject must be preserved perfectly. The new background should realistically match the subject's lighting and perspective.`;
@@ -313,7 +326,7 @@ export const getAssistantResponse = async (
 export const generateImageFromText = async (
     prompt: string
 ): Promise<string> => {
-    return timedApiCall('generateImage', { prompt, provider: 'google' }, async () => {
+    return timedApiCall('generateImage', { prompt }, async () => {
 
         const ai = getAiClient();
         const response = await generateWithModel(ai, {
@@ -329,7 +342,7 @@ export const generateLogo = async (
     existingLogoDataUrl?: string | null,
     backgroundImageDataUrl?: string | null
 ): Promise<string> => {
-    return timedApiCall('generateLogo', { prompt: userPrompt, provider: 'google' }, async () => {
+    return timedApiCall('generateLogo', { prompt: userPrompt }, async () => {
 
         const ai = getAiClient();
         let systemPrompt = !existingLogoDataUrl && !backgroundImageDataUrl 
@@ -355,7 +368,7 @@ export const generateMagicEdit = async (
     originalImage: string,
     userPrompt: string
 ): Promise<string> => {
-    return timedApiCall('magicEdit', { prompt: userPrompt, provider: 'google' }, async () => {
+    return timedApiCall('magicEdit', { prompt: userPrompt }, async () => {
 
         const ai = getAiClient();
         const originalImagePart = dataUrlToPart(originalImage);
@@ -372,7 +385,7 @@ export const composeImages = async (
     secondImage: string,
     userPrompt: string
 ): Promise<string> => {
-    return timedApiCall('composeImages', { prompt: userPrompt, provider: 'google' }, async () => {
+    return timedApiCall('composeImages', { prompt: userPrompt }, async () => {
 
         const ai = getAiClient();
         const originalImagePart = dataUrlToPart(originalImage);
@@ -389,8 +402,9 @@ export const enhancePrompt = async (
     userPrompt: string,
     image?: string | null
 ): Promise<string> => {
-    return timedApiCall('enhancePrompt', { prompt: userPrompt, hasImage: !!image, provider: 'google' }, async () => {
-        const ai = getAiClient();
+    // Enhance prompt always uses the text model capabilities
+    return timedApiCall('enhancePrompt', { prompt: userPrompt, hasImage: !!image }, async () => {
+        const ai = getAiClient(); 
         const parts: any[] = [{ text: userPrompt }];
         let systemInstruction = `You are a prompt engineering expert. Expand the user's brief idea into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
 
@@ -399,9 +413,9 @@ export const enhancePrompt = async (
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
         }
         
-        // Using Gemini 3 Pro text capability
+        // Using text generation on the same client
         const response = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
-            model: 'gemini-3-pro-preview', 
+            model: 'gemini-3-pro-preview', // Use pro for reasoning
             contents: { parts: parts },
             config: { systemInstruction: systemInstruction },
         }));

@@ -17,6 +17,7 @@ import Assistant from './components/Assistant';
 import { init as initAnalytics } from './services/analyticsService';
 import { useAuth } from './AuthContext';
 import LoadingScreen from './components/LoadingScreen';
+import ModelSelector from './components/ModelSelector';
 
 // Lazy load components for better performance
 const BackgroundPanel = lazy(() => import('./components/BackgroundPanel'));
@@ -1042,6 +1043,8 @@ const handleResetLogo = useCallback(() => {
 
             {/* Right Panel: Controls */}
             <aside className="w-full md:max-w-sm flex flex-col gap-4 animate-fade-in-right">
+                <ModelSelector />
+
                 {error && (
                     <div className="bg-red-500/20 border border-red-500/20 text-red-300 p-4 rounded-lg animate-fade-in">
                         <h4 className="font-bold">{t('errorOccurred')}</h4>

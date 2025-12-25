@@ -4,49 +4,54 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import React from 'react';
-import { useTranslations } from '../useTranslations';
-import { SparkleIcon, GlobeAltIcon } from './icons';
+import React, { useEffect, useState } from 'react';
+import { SparkleIcon, CheckCircleIcon, ShieldExclamationIcon } from './icons';
+import { verifyGeminiAccess } from '../services/geminiService';
 
-export type ModelProvider = 'google' | 'openrouter';
+const ModelSelector: React.FC = () => {
+    const [status, setStatus] = useState<'checking' | 'verified' | 'denied'>('checking');
 
-interface ModelSelectorProps {
-    currentProvider: ModelProvider;
-    onProviderChange: (provider: ModelProvider) => void;
-    disabled?: boolean;
-}
+    useEffect(() => {
+        let mounted = true;
+        verifyGeminiAccess().then((isAllowed) => {
+            if (mounted) setStatus(isAllowed ? 'verified' : 'denied');
+        });
+        return () => { mounted = false; };
+    }, []);
 
-const ModelSelector: React.FC<ModelSelectorProps> = ({ currentProvider, onProviderChange, disabled }) => {
-    const { t } = useTranslations();
+    const getStatusContent = () => {
+        switch (status) {
+            case 'checking':
+                return (
+                    <div className="flex items-center gap-2 text-[var(--color-primary-300)] animate-pulse">
+                        <SparkleIcon className="w-4 h-4" />
+                        <span className="text-xs font-semibold">Connecting to Gemini 3 Pro...</span>
+                    </div>
+                );
+            case 'verified':
+                return (
+                    <div className="flex items-center gap-2 text-green-400">
+                        <CheckCircleIcon className="w-4 h-4" />
+                        <span className="text-xs font-bold tracking-wide">Gemini 3 Pro Active</span>
+                    </div>
+                );
+            case 'denied':
+                return (
+                    <div className="flex items-center gap-2 text-red-400" title="The API Key may not have access to this model">
+                        <ShieldExclamationIcon className="w-4 h-4" />
+                        <span className="text-xs font-bold">Access Denied (Check Key)</span>
+                    </div>
+                );
+        }
+    };
 
     return (
-        <div className="flex items-center gap-2 bg-gray-800/50 p-1 rounded-lg border border-gray-700/50">
-            <button
-                onClick={() => onProviderChange('google')}
-                disabled={disabled}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                    currentProvider === 'google'
-                        ? 'bg-[var(--color-primary-500)] text-white shadow-md'
-                        : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
-                }`}
-                title="Google Gemini 3 Pro (Native)"
-            >
-                <SparkleIcon className="w-3.5 h-3.5" />
-                <span>Gemini 3 Pro</span>
-            </button>
-            <button
-                onClick={() => onProviderChange('openrouter')}
-                disabled={disabled}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                    currentProvider === 'openrouter'
-                        ? 'bg-purple-600 text-white shadow-md'
-                        : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
-                }`}
-                title="OpenRouter Gemini 2.5 Flash (Nano Banana)"
-            >
-                <GlobeAltIcon className="w-3.5 h-3.5" />
-                <span>Gemini 2.5 Flash NB</span>
-            </button>
+        <div className={`flex items-center justify-center gap-2 p-2 rounded-lg border w-full shadow-inner shadow-black/20 transition-colors duration-500 ${
+            status === 'verified' ? 'bg-gradient-to-r from-gray-800 to-green-900/20 border-green-500/30' : 
+            status === 'denied' ? 'bg-gradient-to-r from-gray-800 to-red-900/20 border-red-500/30' : 
+            'bg-gray-800/80 border-gray-700/50'
+        }`}>
+            {getStatusContent()}
         </div>
     );
 };
