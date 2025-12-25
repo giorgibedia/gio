@@ -1,10 +1,11 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { UploadIcon, PhotoIcon, ArrowDownTrayIcon, TrashIcon, DevicePhoneMobileIcon, ShieldCheckIcon, SparkleIcon } from './icons';
+import { UploadIcon, PhotoIcon, ArrowDownTrayIcon, TrashIcon, DevicePhoneMobileIcon, ShieldCheckIcon, SparkleIcon, ExclamationTriangleIcon } from './icons';
 import { useTranslations } from '../useTranslations';
 import { getImagesFromGallery, deleteImageFromGallery, SupabaseStoredImage } from '../services/geminiService';
 import Spinner from './Spinner';
@@ -35,10 +36,10 @@ const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect }) => {
       <div className="w-full max-w-7xl mx-auto px-4 sm:px-8 flex-grow flex flex-col items-center justify-center text-center">
         {/* Main CTA Section */}
         <div className="animate-fade-in my-12 w-full">
-            <div className="mb-10 max-w-3xl mx-auto flex items-center justify-center gap-4 p-4 bg-green-500/10 border border-green-500/20 rounded-xl text-left backdrop-blur-sm shadow-lg shadow-green-900/20">
-                <SparkleIcon className="w-8 h-8 text-green-400 flex-shrink-0 animate-pulse" />
+            <div className="mb-10 max-w-3xl mx-auto flex items-center justify-center gap-4 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-left backdrop-blur-sm shadow-lg shadow-red-900/20">
+                <ExclamationTriangleIcon className="w-8 h-8 text-red-400 flex-shrink-0 animate-pulse" />
                 <div>
-                    <p className="text-green-200 font-bold text-lg">{t('testModeMessage' as any)}</p>
+                    <p className="text-red-200 font-bold text-lg">{t('testModeMessage' as any)}</p>
                 </div>
             </div>
 

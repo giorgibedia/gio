@@ -1,4 +1,3 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -8,8 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../AuthContext';
 import { useTranslations } from '../useTranslations';
 // FIX: Import the newly added PaintBrushIcon.
-import { UserCircleIcon, PaintBrushIcon, ShieldExclamationIcon, ChevronLeftIcon, CheckCircleIcon, WrenchScrewdriverIcon } from './icons';
-import { setDebugApiKey, getDebugApiKey, clearDebugApiKey } from '../services/geminiService';
+import { UserCircleIcon, PaintBrushIcon, ShieldExclamationIcon, ChevronLeftIcon, CheckCircleIcon } from './icons';
 
 interface ProfileSettingsScreenProps {
     onClose: () => void;
@@ -28,9 +26,6 @@ const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({ onClose }
     const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
     const [activeTheme, setActiveTheme] = useState('blue');
-    // NOTE: Profile settings now defaults to showing/editing the GOOGLE key by default
-    // For more advanced provider switching, the main UI ModelSelector is preferred.
-    const [customKey, setCustomKey] = useState(getDebugApiKey('google'));
 
     useEffect(() => {
         const savedTheme = localStorage.getItem('appTheme') || 'blue';
@@ -151,40 +146,6 @@ const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({ onClose }
                             <p className="text-gray-300 bg-gray-700/50 p-3 rounded-lg">{user?.email}</p>
                         </div>
                     </form>
-                </section>
-
-                {/* API Key Override Section */}
-                <section className="bg-gray-800/50 border border-yellow-500/30 p-6 rounded-2xl">
-                    <div className="flex items-center gap-3 mb-4">
-                        <WrenchScrewdriverIcon className="w-6 h-6 text-yellow-400" />
-                        <h2 className="text-xl font-bold text-gray-200">Google API Key Override</h2>
-                    </div>
-                    <p className="text-sm text-gray-400 mb-4">
-                        Override the default Google API key here. For Together AI, use the selector on the main screen.
-                    </p>
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            value={customKey}
-                            onChange={(e) => setCustomKey(e.target.value)}
-                            placeholder="Paste Google API Key here (AIzaSy...)"
-                            className="flex-grow bg-gray-900 border border-gray-600 text-gray-200 rounded-lg p-3 focus:ring-2 focus:ring-yellow-500 transition w-full"
-                        />
-                        <button
-                            onClick={() => setDebugApiKey(customKey, 'google')}
-                            className="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded-lg transition-colors whitespace-nowrap"
-                        >
-                            Set Key
-                        </button>
-                        {getDebugApiKey('google') && (
-                             <button
-                                onClick={() => { clearDebugApiKey('google'); setCustomKey(''); }}
-                                className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition-colors"
-                            >
-                                Clear
-                            </button>
-                        )}
-                    </div>
                 </section>
                 
                  {/* Danger Zone */}
