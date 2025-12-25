@@ -20,40 +20,38 @@ const TEXT_MODEL = 'gemini-3-flash-preview';
 // TogetherAI Models
 const TOGETHER_TEXT_MODEL = "meta-llama/Llama-3.3-70B-Instruct-Turbo";
 const TOGETHER_IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"; 
-// Note: TogetherAI Inpainting API is complex, mapping basic edit to FLUX Fill logic manually
 const TOGETHER_INPAINT_MODEL = "black-forest-labs/FLUX.1-Fill-dev"; 
 
-// --- HARDCODED API KEY (Default Fallback) ---
+// --- HARDCODED API KEY (Default Fallback for Google) ---
 const DIRECT_API_KEY = "AIzaSyC6KcojG7D2Uq_lHryo9c3v6wmuDtT9Rm0"; 
 
 // Local Storage Keys
-const CUSTOM_API_KEY_STORAGE = 'pixai_debug_api_key';
 const API_PROVIDER_STORAGE = 'pixai_api_provider';
 
 // --- API Management ---
 
 export const setApiProvider = (provider: ApiProvider) => {
     localStorage.setItem(API_PROVIDER_STORAGE, provider);
-    // We don't reload here, UI should handle state update
 };
 
 export const getApiProvider = (): ApiProvider => {
     return (localStorage.getItem(API_PROVIDER_STORAGE) as ApiProvider) || 'google';
 };
 
-export const setDebugApiKey = (key: string) => {
+// Store keys separately based on provider
+export const setDebugApiKey = (key: string, provider: ApiProvider) => {
     if (!key.trim()) return;
-    localStorage.setItem(CUSTOM_API_KEY_STORAGE, key.trim());
+    localStorage.setItem(`pixai_key_${provider}`, key.trim());
     window.location.reload(); 
 };
 
-export const clearDebugApiKey = () => {
-    localStorage.removeItem(CUSTOM_API_KEY_STORAGE);
+export const clearDebugApiKey = (provider: ApiProvider) => {
+    localStorage.removeItem(`pixai_key_${provider}`);
     window.location.reload();
 };
 
-export const getDebugApiKey = () => {
-    return localStorage.getItem(CUSTOM_API_KEY_STORAGE) || '';
+export const getDebugApiKey = (provider: ApiProvider) => {
+    return localStorage.getItem(`pixai_key_${provider}`) || '';
 };
 
 // --- Helpers ---
@@ -75,16 +73,20 @@ export const isMobileApp = (): boolean => {
 // --- Client Initialization ---
 
 const getApiKey = (): string => {
-    // 1. Custom Key (Highest Priority)
-    const debugKey = localStorage.getItem(CUSTOM_API_KEY_STORAGE);
-    if (debugKey && debugKey.length > 5) return debugKey;
+    const provider = getApiProvider();
+    
+    // 1. Check for specific provider stored key
+    const storedKey = getDebugApiKey(provider);
+    if (storedKey && storedKey.length > 5) return storedKey;
 
-    // 2. Hardcoded / Env Key (Google Only fallback usually)
-    const envKey = process.env.API_KEY;
-    if (envKey && envKey.length > 10) return envKey;
-    if (DIRECT_API_KEY && DIRECT_API_KEY.length > 10) return DIRECT_API_KEY;
+    // 2. Fallbacks (Only for Google)
+    if (provider === 'google') {
+        const envKey = process.env.API_KEY;
+        if (envKey && envKey.length > 10) return envKey;
+        if (DIRECT_API_KEY && DIRECT_API_KEY.length > 10) return DIRECT_API_KEY;
+    }
 
-    throw new Error("API Key Missing.");
+    throw new Error(`API Key Missing for ${provider}. Please configure it in settings.`);
 };
 
 const getAiClient = (): GoogleGenAI => {
@@ -111,7 +113,6 @@ const callTogetherAI = async (endpoint: string, body: any) => {
     return await response.json();
 };
 
-// Helper to remove data:image/png;base64, prefix
 const cleanBase64 = (dataUrl: string) => dataUrl.split(',')[1];
 
 // --- Unified Verification ---
@@ -126,6 +127,10 @@ export const verifyGeminiAccess = async (): Promise<boolean> => {
                 contents: { parts: [{ text: 'ping' }] },
             });
         } else if (provider === 'together') {
+            // Check if we actually have a key before trying to call
+            const key = getDebugApiKey('together');
+            if (!key) throw new Error("No TogetherAI key saved");
+
             await callTogetherAI('chat/completions', {
                 model: TOGETHER_TEXT_MODEL,
                 messages: [{ role: 'user', content: 'ping' }],
@@ -155,7 +160,6 @@ const timedApiCall = async <T>(
         const augmentedDetails = { ...details, duration, model: provider === 'google' ? PRIMARY_IMAGE_MODEL : 'together-ai', provider };
         logAction(featureName, augmentedDetails);
 
-        // Auto-upload to supabase if it looks like an image URL/Base64
         if (typeof result === 'string' && (result.startsWith('data:image') || result.startsWith('http'))) {
             (async () => {
                 try {
@@ -208,7 +212,6 @@ const blobToBase64 = (blob: Blob): Promise<string> => {
     });
 };
 
-// Google Helpers
 const fileToPart = async (file: File) => {
     const mimeType = file.type;
     const data = await blobToBase64(file);
@@ -235,18 +238,9 @@ export const generateEditedImage = async (
 ): Promise<string> => {
     return timedApiCall('retouch', { prompt: userPrompt }, async () => {
         if (getApiProvider() === 'together') {
-            // NOTE: TogetherAI Inpainting logic (using FLUX Fill if available, or fallback)
-            // This is a complex implementation as generic APIs differ. 
-            // Currently throwing specific message or implementing basic text-to-image as fallback
-            // For now, implementing as "New Image with hint" because true Inpainting API on Together varies.
-            // Using FLUX Fill Logic if available in their API docs, otherwise standard gen.
-            
-            // Assuming standard Flux Fill via Images Endpoint or similar. 
-            // Since pure API structure varies, we'll try to simulate or warn.
-            throw new Error("TogetherAI Inpainting (Masking) is not fully supported in this demo yet. Please use Google provider for precise masking.");
+            throw new Error("TogetherAI Inpainting (Masking) is not fully supported yet. Please use Google provider.");
         }
 
-        // GOOGLE
         const ai = getAiClient();
         const response = await ai.models.generateContent({
             model: PRIMARY_IMAGE_MODEL,
@@ -321,7 +315,7 @@ export const generateImageFromText = async (
                 prompt: prompt,
                 width: 1024,
                 height: 1024,
-                steps: 4, // Schnell is fast
+                steps: 4, 
                 n: 1,
                 response_format: 'b64_json'
             });
@@ -374,7 +368,6 @@ export const generateMagicEdit = async (
 ): Promise<string> => {
     return timedApiCall('magicEdit', { prompt: userPrompt }, async () => {
         if (getApiProvider() === 'together') {
-             // Use Google for complex edits for now
              throw new Error("For magic editing, please switch to Google provider in settings.");
         }
 
@@ -449,7 +442,6 @@ export const enhancePrompt = async (
 };
 
 // --- Supabase Storage ---
-// (Kept same as before)
 export interface SupabaseStoredImage {
     url: string;
     name: string;

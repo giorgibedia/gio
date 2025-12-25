@@ -22,10 +22,14 @@ const ModelSelector: React.FC = () => {
         const currentProvider = getApiProvider();
         setProvider(currentProvider);
         
-        const currentKey = getDebugApiKey();
+        // Load the key SPECIFIC to this provider
+        const currentKey = getDebugApiKey(currentProvider);
         if (currentKey) {
             setHasCustomKey(true);
             setInputKey(currentKey);
+        } else {
+            setHasCustomKey(false);
+            setInputKey('');
         }
 
         verifyGeminiAccess().then((isAllowed) => {
@@ -37,16 +41,23 @@ const ModelSelector: React.FC = () => {
     const handleSave = () => {
         if (inputKey.trim()) {
             setApiProvider(provider);
-            setDebugApiKey(inputKey); // This reloads the page
+            setDebugApiKey(inputKey, provider); // This reloads the page
         }
     };
 
     const handleProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        setProvider(e.target.value as ApiProvider);
+        const newProvider = e.target.value as ApiProvider;
+        setProvider(newProvider);
+        setApiProvider(newProvider); // Save preference immediately
+        
+        // Load the key stored for this new provider
+        const storedKey = getDebugApiKey(newProvider);
+        setInputKey(storedKey || '');
+        setHasCustomKey(!!storedKey);
     };
 
     const handleClear = () => {
-        clearDebugApiKey();
+        clearDebugApiKey(provider);
     };
 
     if (isEditing) {
