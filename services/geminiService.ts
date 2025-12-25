@@ -13,8 +13,8 @@ import { ref, remove } from 'firebase/database';
 // Configuration for Gemini Models - Upgraded to Gemini 3 Pro
 const PRIMARY_IMAGE_MODEL = 'gemini-3-pro-image-preview'; 
 
-// The specific fallback key requested by the user
-const MASTER_API_KEY = "AIzaSyC6KcojG7D2Uq_lHryo9c3v6wmuDtT9Rm0";
+// fallback key is removed for security. Please set API_KEY in Vercel Environment Variables.
+const MASTER_API_KEY = ""; 
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -36,20 +36,19 @@ export const isMobileApp = (): boolean => {
 
 /**
  * A robust way to get the Gemini AI client.
- * Prioritizes Vercel Environment Variable, falls back to Master Key.
+ * Prioritizes Vercel Environment Variable.
  */
 const getAiClient = (): GoogleGenAI => {
     // 1. Try to get key from Vercel/System Environment (injected via vite.config.ts)
     const envKey = process.env.API_KEY;
     
     // 2. Determine which key to use. 
-    // If envKey exists and is valid (longer than 10 chars), use it. Otherwise use MASTER_API_KEY.
     const apiKey = (envKey && typeof envKey === 'string' && envKey.length > 10) 
         ? envKey 
         : MASTER_API_KEY;
 
     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
-        const errorMessage = "API Key is not configured. Please reload.";
+        const errorMessage = "API Key missing. Add 'API_KEY' to Vercel Environment Variables.";
         console.error("Critical Error: API Key is missing.");
         throw new Error(errorMessage);
     }
@@ -122,6 +121,11 @@ const retryOperation = async <T>(
                 errString = (error.message || "") + (error.toString ? error.toString() : "") + JSON.stringify(error);
             } catch(e) { errString = "unknown error"; }
             
+            // Check for specific Leaked Key / Permission Denied error
+            if (errString.includes("leaked") || (errString.includes("403") && errString.includes("key"))) {
+                 throw new Error("CRITICAL: Your API Key was reported as leaked and blocked by Google. Please generate a NEW key and update Vercel Environment Variables.");
+            }
+
             const isRateLimit = errString.includes('429') || errString.includes('RESOURCE_EXHAUSTED') || errString.includes('quota');
             const isServerOverload = errString.includes('503') || errString.includes('Overloaded');
 
