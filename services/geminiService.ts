@@ -10,22 +10,8 @@ import { supabase } from './supabaseClient';
 import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 
-// Configuration for Intelligent Model Fallback (Google Internal Fallback)
-// UPGRADED TO GEMINI 3 PRO for highest quality
+// Configuration for Gemini 3 Pro
 const PRIMARY_IMAGE_MODEL = 'gemini-3-pro-image-preview'; 
-const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
-
-// OpenRouter Configuration
-// LIST OF KEYS provided by user. The app will rotate through these if one is exhausted.
-const OPENROUTER_API_KEYS = [
-    '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', // Key 1
-    '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'  // Key 2
-];
-
-// Using the specific model ID requested by user for OpenRouter
-const OPENROUTER_MODEL = 'google/gemini-2.5-flash-image';
-
-export type ModelProvider = 'google' | 'openrouter';
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -140,225 +126,18 @@ const retryOperation = async <T>(
 };
 
 /**
- * Executes a generation request with a fallback mechanism and retry logic.
- * This is specific to Google's internal model fallback (e.g. Pro -> Flash).
+ * Executes a generation request using the primary model.
  */
-const generateWithFallback = async (
+const generateWithModel = async (
     ai: GoogleGenAI, 
     params: any
 ): Promise<GenerateContentResponse> => {
-    try {
-        console.log(`Attempting generation with ${PRIMARY_IMAGE_MODEL}...`);
-        return await retryOperation(() => ai.models.generateContent({
-            ...params,
-            model: PRIMARY_IMAGE_MODEL
-        }));
-    } catch (error: any) {
-        const errString = error.toString();
-        // If Gemini 3 Pro is not available (404/Not Found) or permission denied, fall back to Flash 2.5
-        if (errString.includes('403') || errString.includes('PERMISSION_DENIED') || errString.includes('404') || errString.includes('NOT_FOUND')) {
-            console.warn(`Primary model failed. Auto-switching to ${FALLBACK_IMAGE_MODEL}.`);
-            return await retryOperation(() => ai.models.generateContent({
-                ...params,
-                model: FALLBACK_IMAGE_MODEL
-            }));
-        }
-        throw error;
-    }
+    console.log(`Attempting generation with ${PRIMARY_IMAGE_MODEL}...`);
+    return await retryOperation(() => ai.models.generateContent({
+        ...params,
+        model: PRIMARY_IMAGE_MODEL
+    }));
 };
-
-/**
- * Executes a single request to OpenRouter with a specific key.
- */
-const executeOpenRouterRequest = async (
-    apiKey: string,
-    prompt: string, 
-    images: string[]
-): Promise<string> => {
-    const content: any[] = [{ type: "text", text: prompt }];
-    
-    // Add images to content
-    images.forEach(img => {
-        content.push({
-            type: "image_url",
-            image_url: { url: img }
-        });
-    });
-
-    // Use dynamic site URL to fix 401 errors on Vercel vs Localhost
-    // OpenRouter often checks the Referer header matching.
-    const siteUrl = typeof window !== 'undefined' ? window.location.origin : "https://pixai.app";
-    const siteTitle = "PixAI";
-
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-            "Authorization": `Bearer ${apiKey.trim()}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": siteUrl, 
-            "X-Title": siteTitle
-        },
-        body: JSON.stringify({
-            model: OPENROUTER_MODEL,
-            messages: [
-                {
-                    role: "user",
-                    content: content
-                }
-            ],
-            temperature: 0.7,
-            max_tokens: 1000,
-            stream: false
-        })
-    });
-
-    if (!response.ok) {
-        const errText = await response.text();
-        let errMsg = `OpenRouter Error (${response.status}): ${response.statusText}`;
-        
-        try {
-            const errData = JSON.parse(errText);
-            if (errData.error?.message) {
-                errMsg = errData.error.message;
-            } else if (errData.error) {
-                errMsg = JSON.stringify(errData.error);
-            }
-        } catch (e) {
-            errMsg += ` - Details: ${errText.substring(0, 100)}`;
-        }
-        
-        // Return errors that should trigger a key switch as specific messages
-        if (response.status === 402 || errMsg.toLowerCase().includes('credits') || errMsg.toLowerCase().includes('balance') || errMsg.toLowerCase().includes('quota')) {
-            throw new Error("QUOTA_EXHAUSTED");
-        }
-        if (response.status === 429) {
-            throw new Error("RATE_LIMITED"); 
-        }
-        // "User not found" often means the key is invalid or header format is rejected by the specific provider
-        if (response.status === 401 && errMsg.includes('User not found')) {
-             throw new Error("AUTH_FAILED"); 
-        }
-        
-        throw new Error(errMsg);
-    }
-
-    const data = await response.json();
-    console.log("OpenRouter Response Full Data:", data); 
-
-    const choice = data.choices?.[0];
-    let resultText = "";
-
-    // 1. Check for structured images array (common in some OpenRouter google integrations)
-    if (choice?.message?.images?.length > 0) {
-        const image = choice.message.images[0];
-        // Check for nested image_url object
-        if (image.image_url?.url) return image.image_url.url;
-        // Check for direct url property
-        if (image.url) return image.url;
-    }
-
-    // 2. Check for multimodal content array
-    if (choice?.message?.content) {
-        if (typeof choice.message.content === 'string') {
-            resultText = choice.message.content;
-        } else if (Array.isArray(choice.message.content)) {
-            resultText = choice.message.content
-                .map((part: any) => {
-                        if (part.text) return part.text;
-                        if (part.image_url?.url) return `![](${part.image_url.url})`;
-                        return '';
-                })
-                .join('\n');
-        }
-    }
-
-    if (!resultText) {
-        // If usage indicates an image was generated but we can't find it, that's an error.
-        if (data.usage?.completion_tokens > 0 || data.usage?.native_tokens_completion_images > 0) {
-             console.error("OpenRouter Empty Content Response (but tokens used):", JSON.stringify(data, null, 2));
-             throw new Error("The model generated an image but OpenRouter did not return the image data in the response text.");
-        }
-        throw new Error("OpenRouter returned no content.");
-    }
-    
-    // 3. Markdown image match: ![alt](url)
-    const markdownImageMatch = resultText.match(/!\[.*?\]\((.*?)\)/);
-    if (markdownImageMatch && markdownImageMatch[1]) {
-        return markdownImageMatch[1];
-    }
-
-    // 4. More permissive URL matching to catch signed URLs or URLs with params
-    const urlMatch = resultText.match(/(https?:\/\/[^\s<>"')]+)/);
-    if (urlMatch) {
-            const url = urlMatch[0];
-            const hasImageExt = ['.png', '.jpg', '.jpeg', '.webp', '.gif'].some(ext => url.toLowerCase().includes(ext));
-            const isStorageUrl = url.includes('storage.googleapis.com') || url.includes('amazonaws.com') || url.includes('usercontent') || url.includes('fal.media');
-            
-            if (hasImageExt || isStorageUrl || resultText.length < 500) {
-                return url;
-            }
-    }
-    
-    // Fallback: If result is short and doesn't look like image data, throw
-    if (resultText.length < 200 && !resultText.startsWith('data:')) {
-            console.warn("OpenRouter Text Response (Not Image):", resultText);
-            throw new Error("The OpenRouter model returned text instead of an image.");
-    }
-    
-    return resultText;
-}
-
-/**
- * OpenRouter API Call wrapper with Key Rotation
- */
-const callOpenRouter = async (
-    prompt: string, 
-    images: string[] = [] // Base64 data URLs
-): Promise<string> => {
-    if (!OPENROUTER_API_KEYS || OPENROUTER_API_KEYS.length === 0) {
-        throw new Error("OpenRouter API Key is not configured.");
-    }
-
-    let lastError: any;
-
-    // Loop through available keys
-    for (let i = 0; i < OPENROUTER_API_KEYS.length; i++) {
-        const currentKey = OPENROUTER_API_KEYS[i];
-        
-        try {
-            if (i > 0) console.log(`Switching to OpenRouter Key #${i + 1}...`);
-            return await executeOpenRouterRequest(currentKey, prompt, images);
-        } catch (error: any) {
-            lastError = error;
-            const errMsg = error.message || error.toString();
-            
-            // Check if error is related to quota or limits or auth failure (invalid key)
-            const isRecoverableError = errMsg.includes("QUOTA_EXHAUSTED") || 
-                                       errMsg.includes("RATE_LIMITED") || 
-                                       errMsg.includes("AUTH_FAILED") ||
-                                       errMsg.toLowerCase().includes("credits") ||
-                                       errMsg.includes("402") ||
-                                       errMsg.includes("429") ||
-                                       errMsg.includes("401");
-
-            if (isRecoverableError) {
-                console.warn(`OpenRouter Key #${i + 1} failed (${errMsg}). Trying next key...`);
-                // Continue to next iteration (next key)
-                continue;
-            } else {
-                // If it's a different error (e.g. model refused, parsing error), throw immediately
-                // don't waste other keys on a bad request.
-                console.error(`OpenRouter Call Failed (Key #${i+1}):`, error);
-                throw error;
-            }
-        }
-    }
-
-    // If we run out of keys
-    console.error("All OpenRouter keys exhausted.");
-    throw new Error("All OpenRouter API keys are exhausted. Please try again later.");
-};
-
 
 /**
  * A wrapper function to time API calls, log performance, and handle errors.
@@ -384,7 +163,7 @@ const timedApiCall = async <T>(
                     let imageFile: File;
                     
                     if (result.startsWith('http')) {
-                        // For URLs (OpenRouter), fetch blob first
+                        // For URLs (OpenRouter - kept for backward compat if any logic remains, though logic removed), fetch blob first
                         const res = await fetch(result);
                         const blob = await res.blob();
                         imageFile = new File([blob], filename, { type: blob.type });
@@ -484,25 +263,9 @@ const handleSingleApiResponse = (
 export const generateEditedImage = async (
     originalImage: string,
     userPrompt: string,
-    maskImage: File,
-    provider: ModelProvider = 'google'
+    maskImage: File
 ): Promise<string> => {
-    return timedApiCall('retouch', { prompt: userPrompt, provider }, async () => {
-        
-        if (provider === 'openrouter') {
-             // For OpenRouter, we simulate masking by sending original + mask + instructions
-             const maskDataUrl = await new Promise<string>((resolve) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result as string);
-                reader.readAsDataURL(maskImage);
-             });
-             
-             const prompt = `Edit the first image based on the user request: "${userPrompt}". 
-             Use the second image as a mask (white areas are editable, black areas must remain unchanged). 
-             Return the final edited image. Please provide the response as a markdown image link.`;
-             
-             return await callOpenRouter(prompt, [originalImage, maskDataUrl]);
-        }
+    return timedApiCall('retouch', { prompt: userPrompt, provider: 'google' }, async () => {
         
         // Google Logic
         const ai = getAiClient();
@@ -511,7 +274,7 @@ export const generateEditedImage = async (
         const systemPrompt = `You are a precision digital artist. Edit the image based on the prompt ONLY in the white areas of the mask. The black areas of the mask must remain completely untouched. The edit must be seamless and hyper-realistic.`;
         const prompt = `${systemPrompt}\n\nUser's request: "${userPrompt}"`;
 
-        const response = await generateWithFallback(ai, {
+        const response = await generateWithModel(ai, {
             contents: { parts: [originalImagePart, maskImagePart, { text: prompt }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
@@ -522,23 +285,16 @@ export const generateEditedImage = async (
 
 export const generateBackgroundAlteredImage = async (
     originalImage: string,
-    alterationPrompt: string,
-    provider: ModelProvider = 'google'
+    alterationPrompt: string
 ): Promise<string> => {
-    return timedApiCall('background', { prompt: alterationPrompt, provider }, async () => {
-
-        if (provider === 'openrouter') {
-            const prompt = `Remove the background of this image and replace it with: "${alterationPrompt}". 
-            Keep the main subject exactly as is. Return the final image as a markdown image link.`;
-            return await callOpenRouter(prompt, [originalImage]);
-        }
+    return timedApiCall('background', { prompt: alterationPrompt, provider: 'google' }, async () => {
 
         const ai = getAiClient();
         const systemPrompt = `Isolate the main subject and replace the background. Subject must be preserved perfectly. The new background should realistically match the subject's lighting and perspective.`;
         const finalPrompt = `${systemPrompt}\n\nUser's request: "${alterationPrompt}"`;
         const originalImagePart = dataUrlToPart(originalImage);
 
-        const response = await generateWithFallback(ai, {
+        const response = await generateWithModel(ai, {
             contents: { parts: [originalImagePart, { text: finalPrompt }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
@@ -555,18 +311,12 @@ export const getAssistantResponse = async (
 };
 
 export const generateImageFromText = async (
-    prompt: string,
-    provider: ModelProvider = 'google'
+    prompt: string
 ): Promise<string> => {
-    return timedApiCall('generateImage', { prompt, provider }, async () => {
-
-        if (provider === 'openrouter') {
-            const finalPrompt = `Generate a photorealistic image of: ${prompt}. Return the image as a markdown image link.`;
-            return await callOpenRouter(finalPrompt, []);
-        }
+    return timedApiCall('generateImage', { prompt, provider: 'google' }, async () => {
 
         const ai = getAiClient();
-        const response = await generateWithFallback(ai, {
+        const response = await generateWithModel(ai, {
             contents: { parts: [{ text: prompt }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
@@ -577,21 +327,9 @@ export const generateImageFromText = async (
 export const generateLogo = async (
     userPrompt: string,
     existingLogoDataUrl?: string | null,
-    backgroundImageDataUrl?: string | null,
-    provider: ModelProvider = 'google'
+    backgroundImageDataUrl?: string | null
 ): Promise<string> => {
-    return timedApiCall('generateLogo', { prompt: userPrompt, provider }, async () => {
-
-        if (provider === 'openrouter') {
-             const images = [];
-             if (backgroundImageDataUrl) images.push(backgroundImageDataUrl);
-             else if (existingLogoDataUrl) images.push(existingLogoDataUrl);
-             
-             let prompt = `Create a logo: "${userPrompt}". Return the image as a markdown image link.`;
-             if (images.length > 0) prompt = `Using the provided image as context/background, create/modify a logo: "${userPrompt}". Return the final image as a markdown image link.`;
-             
-             return await callOpenRouter(prompt, images);
-        }
+    return timedApiCall('generateLogo', { prompt: userPrompt, provider: 'google' }, async () => {
 
         const ai = getAiClient();
         let systemPrompt = !existingLogoDataUrl && !backgroundImageDataUrl 
@@ -604,7 +342,7 @@ export const generateLogo = async (
         if (backgroundImageDataUrl) parts.unshift(dataUrlToPart(backgroundImageDataUrl));
         else if (existingLogoDataUrl) parts.unshift(dataUrlToPart(existingLogoDataUrl));
 
-        const response = await generateWithFallback(ai, {
+        const response = await generateWithModel(ai, {
             contents: { parts: parts },
             config: { responseModalities: [Modality.IMAGE] },
         });
@@ -615,19 +353,13 @@ export const generateLogo = async (
 
 export const generateMagicEdit = async (
     originalImage: string,
-    userPrompt: string,
-    provider: ModelProvider = 'google'
+    userPrompt: string
 ): Promise<string> => {
-    return timedApiCall('magicEdit', { prompt: userPrompt, provider }, async () => {
-
-        if (provider === 'openrouter') {
-            const prompt = `Edit this image: "${userPrompt}". Make it photorealistic. Return the final image as a markdown image link.`;
-            return await callOpenRouter(prompt, [originalImage]);
-        }
+    return timedApiCall('magicEdit', { prompt: userPrompt, provider: 'google' }, async () => {
 
         const ai = getAiClient();
         const originalImagePart = dataUrlToPart(originalImage);
-        const response = await generateWithFallback(ai, {
+        const response = await generateWithModel(ai, {
             contents: { parts: [originalImagePart, { text: userPrompt }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
@@ -638,20 +370,14 @@ export const generateMagicEdit = async (
 export const composeImages = async (
     originalImage: string,
     secondImage: string,
-    userPrompt: string,
-    provider: ModelProvider = 'google'
+    userPrompt: string
 ): Promise<string> => {
-    return timedApiCall('composeImages', { prompt: userPrompt, provider }, async () => {
-
-        if (provider === 'openrouter') {
-            const prompt = `Compose these two images together based on this instruction: "${userPrompt}". Return the final composed image as a markdown image link.`;
-            return await callOpenRouter(prompt, [originalImage, secondImage]);
-        }
+    return timedApiCall('composeImages', { prompt: userPrompt, provider: 'google' }, async () => {
 
         const ai = getAiClient();
         const originalImagePart = dataUrlToPart(originalImage);
         const secondImagePart = dataUrlToPart(secondImage);
-        const response = await generateWithFallback(ai, {
+        const response = await generateWithModel(ai, {
             contents: { parts: [originalImagePart, secondImagePart, { text: userPrompt }] },
             config: { responseModalities: [Modality.IMAGE] },
         });
@@ -661,12 +387,9 @@ export const composeImages = async (
 
 export const enhancePrompt = async (
     userPrompt: string,
-    image?: string | null,
-    provider: ModelProvider = 'google'
+    image?: string | null
 ): Promise<string> => {
-    return timedApiCall('enhancePrompt', { prompt: userPrompt, hasImage: !!image, provider }, async () => {
-        // We use Google for prompt enhancement even if OpenRouter is selected for generation,
-        // because prompt enhancement is a pure text task where Gemini 3 Pro excels.
+    return timedApiCall('enhancePrompt', { prompt: userPrompt, hasImage: !!image, provider: 'google' }, async () => {
         const ai = getAiClient();
         const parts: any[] = [{ text: userPrompt }];
         let systemInstruction = `You are a prompt engineering expert. Expand the user's brief idea into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
@@ -676,7 +399,7 @@ export const enhancePrompt = async (
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
         }
         
-        // Upgrade to Gemini 3 Pro for prompt enhancement logic
+        // Using Gemini 3 Pro text capability
         const response = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
             model: 'gemini-3-pro-preview', 
             contents: { parts: parts },

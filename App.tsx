@@ -6,7 +6,7 @@
 
 
 import React, { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react';
-import { generateEditedImage, generateBackgroundAlteredImage, saveImageToGallery, generateImageFromText, generateMagicEdit, composeImages, generateLogo, dataURLtoFile, enhancePrompt, ModelProvider } from './services/geminiService';
+import { generateEditedImage, generateBackgroundAlteredImage, saveImageToGallery, generateImageFromText, generateMagicEdit, composeImages, generateLogo, dataURLtoFile, enhancePrompt } from './services/geminiService';
 import Header from './components/Header';
 import Spinner from './components/Spinner';
 import MaskingToolbar from './components/MaskingToolbar';
@@ -17,7 +17,6 @@ import Assistant from './components/Assistant';
 import { init as initAnalytics } from './services/analyticsService';
 import { useAuth } from './AuthContext';
 import LoadingScreen from './components/LoadingScreen';
-import ModelSelector from './components/ModelSelector';
 
 // Lazy load components for better performance
 const BackgroundPanel = lazy(() => import('./components/BackgroundPanel'));
@@ -217,9 +216,6 @@ const App: React.FC = () => {
   const [page, setPage] = useState<Page>('main');
   const [showWelcomeScreen, setShowWelcomeScreen] = useState(false);
   
-  // Model Provider State
-  const [selectedModel, setSelectedModel] = useState<ModelProvider>('google');
-
   // Admin & AI Panel State
   // Initialize synchronously from URL to prevent race conditions
   const [isAdminView, setIsAdminView] = useState(() => {
@@ -527,7 +523,7 @@ const App: React.FC = () => {
           return;
         }
 
-        const editedImageUrl = await generateEditedImage(currentImage, prompt, maskFile, selectedModel);
+        const editedImageUrl = await generateEditedImage(currentImage, prompt, maskFile);
         if (isCancelledRef.current) return;
         
         const watermarkedImageUrl = await addWatermark(editedImageUrl);
@@ -539,7 +535,7 @@ const App: React.FC = () => {
     } finally {
         setIsLoading(false);
     }
-  }, [currentImage, prompt, hasMask, generateMaskFile, t, addImageToHistory, selectedModel]);
+  }, [currentImage, prompt, hasMask, generateMaskFile, t, addImageToHistory]);
 
   const handleApplyBackgroundChange = useCallback(async (backgroundPrompt: string) => {
     if (!currentImage) return;
@@ -549,7 +545,7 @@ const App: React.FC = () => {
     setError(null);
     
     try {
-        const adjustedImageUrl = await generateBackgroundAlteredImage(currentImage, backgroundPrompt, selectedModel);
+        const adjustedImageUrl = await generateBackgroundAlteredImage(currentImage, backgroundPrompt);
         if (isCancelledRef.current) return;
         
         const watermarkedImageUrl = await addWatermark(adjustedImageUrl);
@@ -561,7 +557,7 @@ const App: React.FC = () => {
     } finally {
         setIsLoading(false);
     }
-  }, [currentImage, t, addImageToHistory, selectedModel]);
+  }, [currentImage, t, addImageToHistory]);
 
   const handleMagicGenerate = useCallback(async () => {
     if (!prompt.trim()) {
@@ -576,13 +572,13 @@ const App: React.FC = () => {
         let finalImageUrl: string;
         if (currentImage && secondImage) {
             // Case 3: Compose two images with a prompt
-            finalImageUrl = await composeImages(currentImage, secondImage, prompt, selectedModel);
+            finalImageUrl = await composeImages(currentImage, secondImage, prompt);
         } else if (currentImage) {
             // Case 2: Maskless edit on one image
-            finalImageUrl = await generateMagicEdit(currentImage, prompt, selectedModel);
+            finalImageUrl = await generateMagicEdit(currentImage, prompt);
         } else {
             // Case 1: Generate new image from text
-            const imageUrl = await generateImageFromText(prompt, selectedModel);
+            const imageUrl = await generateImageFromText(prompt);
             const watermarkedImageUrl = await addWatermark(imageUrl);
             setHistory([watermarkedImageUrl]);
             setHistoryIndex(0);
@@ -603,7 +599,7 @@ const App: React.FC = () => {
     } finally {
         setIsLoading(false);
     }
-}, [currentImage, secondImage, prompt, addImageToHistory, t, clearMask, resetView, selectedModel]);
+}, [currentImage, secondImage, prompt, addImageToHistory, t, clearMask, resetView]);
 
 const handleGenerateLogo = useCallback(async (logoPrompt: string) => {
     isCancelledRef.current = false;
@@ -611,7 +607,7 @@ const handleGenerateLogo = useCallback(async (logoPrompt: string) => {
     setError(null);
 
     try {
-        const newLogoUrl = await generateLogo(logoPrompt, logoInProgress, logoBackgroundImage, selectedModel);
+        const newLogoUrl = await generateLogo(logoPrompt, logoInProgress, logoBackgroundImage);
         if (isCancelledRef.current) return;
 
         const watermarkedLogoUrl = await addWatermark(newLogoUrl);
@@ -623,7 +619,7 @@ const handleGenerateLogo = useCallback(async (logoPrompt: string) => {
     } finally {
         setIsLoading(false);
     }
-}, [t, logoInProgress, logoBackgroundImage, selectedModel]);
+}, [t, logoInProgress, logoBackgroundImage]);
 
 const handleResetLogo = useCallback(() => {
     setLogoInProgress(null);
@@ -1053,13 +1049,6 @@ const handleResetLogo = useCallback(() => {
                     </div>
                 )}
                 
-                {/* Model Selector */}
-                <ModelSelector 
-                    currentProvider={selectedModel} 
-                    onProviderChange={setSelectedModel} 
-                    disabled={isLoading || isEnhancing} 
-                />
-
                 <Suspense fallback={<div className="w-full h-48 flex items-center justify-center bg-gray-800/50 border border-gray-700 rounded-lg"><Spinner /></div>}>
                     {activeTab === 'retouch' && (
                         <div className="w-full bg-gray-800/50 border border-gray-700 rounded-lg p-4 flex flex-col gap-4 animate-fade-in backdrop-blur-sm">
