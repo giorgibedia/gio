@@ -10,10 +10,10 @@ import { supabase } from './supabaseClient';
 import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 
-// Configuration for Gemini Models - Strictly using Gemini 3 Pro
+// Configuration for Gemini Models - Upgraded to Gemini 3 Pro
 const PRIMARY_IMAGE_MODEL = 'gemini-3-pro-image-preview'; 
 
-// The specific key requested by the user for ALL operations
+// The specific fallback key requested by the user
 const MASTER_API_KEY = "AIzaSyC6KcojG7D2Uq_lHryo9c3v6wmuDtT9Rm0";
 
 // Helper to convert a data URL string to a File object for saving.
@@ -36,11 +36,17 @@ export const isMobileApp = (): boolean => {
 
 /**
  * A robust way to get the Gemini AI client.
- * Uses the single master key for everything.
+ * Prioritizes Vercel Environment Variable, falls back to Master Key.
  */
 const getAiClient = (): GoogleGenAI => {
-    // Strictly use the provided master key for everything
-    const apiKey = MASTER_API_KEY;
+    // 1. Try to get key from Vercel/System Environment (injected via vite.config.ts)
+    const envKey = process.env.API_KEY;
+    
+    // 2. Determine which key to use. 
+    // If envKey exists and is valid (longer than 10 chars), use it. Otherwise use MASTER_API_KEY.
+    const apiKey = (envKey && typeof envKey === 'string' && envKey.length > 10) 
+        ? envKey 
+        : MASTER_API_KEY;
 
     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
         const errorMessage = "API Key is not configured. Please reload.";
@@ -413,7 +419,7 @@ export const enhancePrompt = async (
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
         }
         
-        // Using text generation on the same client
+        // Using text generation on the same client, upgraded to pro
         const response = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
             model: 'gemini-3-pro-preview', // Use pro for reasoning
             contents: { parts: parts },
