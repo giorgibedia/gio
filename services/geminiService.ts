@@ -10,13 +10,15 @@ import { supabase } from './supabaseClient';
 import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 
-// Configuration for Intelligent Model Fallback
+// Configuration for Intelligent Model Fallback (Google Internal Fallback)
 // UPGRADED TO GEMINI 3 PRO for highest quality
 const PRIMARY_IMAGE_MODEL = 'gemini-3-pro-image-preview'; 
 const FALLBACK_IMAGE_MODEL = 'gemini-2.5-flash-image';
 
 // OpenRouter Configuration
-const OPENROUTER_API_KEY = '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';
+// Key provided by user for Gemini 2.5 Flash / 2.0 Flash Exp usage
+const OPENROUTER_API_KEY = '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';
+// Using the specific model ID requested by user for OpenRouter
 const OPENROUTER_MODEL = 'google/gemini-2.5-flash-image';
 
 export type ModelProvider = 'google' | 'openrouter';
@@ -48,8 +50,6 @@ const getAiClient = (): GoogleGenAI => {
 
     // 2. Fallback: If no Env Var found (e.g. mobile build, or user hasn't set up Vercel envs),
     // use the provided production key.
-    // CRITICAL: We split the key string to prevent automated GitHub/Google scanners from 
-    // detecting it as a "leaked credential" and blocking it (Error 403).
     if (!apiKey || apiKey === 'undefined' || apiKey === '') {
         const k1 = "AIzaSyAHBNSNC6";
         const k2 = "AAPiQqzyMeM-";
@@ -87,7 +87,6 @@ const getRetryDelay = (error: any): number => {
     if (match && match[1]) {
         const seconds = parseFloat(match[1]);
         console.log(`Detected API requested wait time: ${seconds}s`);
-        // Reduced buffer from 2000ms to 500ms to be faster
         return Math.ceil(seconds * 1000) + 500;
     }
     return 0;
@@ -123,8 +122,6 @@ const retryOperation = async <T>(
                 const waitTimeSec = (delay/1000).toFixed(1);
                 console.warn(`API Rate Limit hit. Waiting ${waitTimeSec}s before attempt ${i + 2}/${maxRetries + 1}...`);
                 
-                // UX Hack: If wait time is extremely long (e.g. > 20s), notify the user via console/alert so they don't think it froze.
-                // We use setTimeout to not block the thread immediately.
                 if (delay > 20000) {
                     console.log(`%c NOTE: High traffic. AI requires a ${waitTimeSec}s cooldown.`, 'background: #222; color: #bada55; font-size:14px');
                 }
@@ -140,6 +137,7 @@ const retryOperation = async <T>(
 
 /**
  * Executes a generation request with a fallback mechanism and retry logic.
+ * This is specific to Google's internal model fallback (e.g. Pro -> Flash).
  */
 const generateWithFallback = async (
     ai: GoogleGenAI, 
@@ -173,6 +171,10 @@ const callOpenRouter = async (
     images: string[] = [] // Base64 data URLs
 ): Promise<string> => {
     try {
+        if (!OPENROUTER_API_KEY) {
+            throw new Error("OpenRouter API Key is not configured. Please switch to Google Provider or configure the key.");
+        }
+
         const content: any[] = [{ type: "text", text: prompt }];
         
         // Add images to content
@@ -188,8 +190,8 @@ const callOpenRouter = async (
             headers: {
                 "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
                 "Content-Type": "application/json",
-                "HTTP-Referer": typeof window !== 'undefined' ? window.location.origin : '',
-                "X-Title": "PixAI"
+                "HTTP-Referer": "https://pixai.app", // Fixed: Required by OpenRouter, must be a URL
+                "X-Title": "PixAI" // Fixed: Required by OpenRouter
             },
             body: JSON.stringify({
                 model: OPENROUTER_MODEL,
@@ -201,13 +203,25 @@ const callOpenRouter = async (
                 ],
                 // Attempting to force the model to provide useful output even if it generates an image natively
                 temperature: 0.7,
-                max_tokens: 1000, // Constrain output tokens to prevent "insufficient credits" errors
+                max_tokens: 1000, 
             })
         });
 
         if (!response.ok) {
-            const errData = await response.json().catch(() => ({}));
-            const errMsg = errData.error?.message || `OpenRouter Error: ${response.statusText}`;
+            const errText = await response.text();
+            let errMsg = `OpenRouter Error (${response.status}): ${response.statusText}`;
+            
+            try {
+                const errData = JSON.parse(errText);
+                if (errData.error?.message) {
+                    errMsg = errData.error.message;
+                } else if (errData.error) {
+                    errMsg = JSON.stringify(errData.error);
+                }
+            } catch (e) {
+                // If JSON parse fails, append raw text
+                errMsg += ` - Details: ${errText.substring(0, 100)}`;
+            }
             
             // Handle credit/quota errors specifically
             if (response.status === 402 || errMsg.toLowerCase().includes('credits') || errMsg.toLowerCase().includes('balance')) {
@@ -218,12 +232,30 @@ const callOpenRouter = async (
         }
 
         const data = await response.json();
-        const resultText = data.choices?.[0]?.message?.content;
+        const choice = data.choices?.[0];
+        let resultText = "";
+
+        // Robust content extraction for multimodal responses
+        if (choice?.message?.content) {
+            if (typeof choice.message.content === 'string') {
+                resultText = choice.message.content;
+            } else if (Array.isArray(choice.message.content)) {
+                // Handle multimodal output array if present (text + image_url parts)
+                resultText = choice.message.content
+                    .map((part: any) => {
+                         if (part.text) return part.text;
+                         if (part.image_url?.url) return `![](${part.image_url.url})`;
+                         return '';
+                    })
+                    .join('\n');
+            }
+        }
 
         if (!resultText) {
             console.error("OpenRouter Empty Content Response:", JSON.stringify(data, null, 2));
             // Check if there is an image in a non-standard location or if tokens were consumed
             if (data.usage?.completion_tokens > 0 || data.usage?.native_tokens_completion_images > 0) {
+                 // Try to fallback to Google provider logic automatically if user allows, but here we must return error
                  throw new Error("The model generated an image but OpenRouter did not return the image data in the response text.");
             }
             throw new Error("OpenRouter returned no content. The model may have refused the request.");
@@ -245,7 +277,7 @@ const callOpenRouter = async (
         // Fallback: If result is short and doesn't look like image data, throw
         if (resultText.length < 200 && !resultText.startsWith('data:')) {
              console.warn("OpenRouter Text Response (Not Image):", resultText);
-             throw new Error("The OpenRouter model returned text instead of an image. Try changing your prompt.");
+             throw new Error("The OpenRouter model returned text instead of an image. Try changing your prompt or check if the selected model supports image generation.");
         }
         
         return resultText;
@@ -388,7 +420,6 @@ export const generateEditedImage = async (
         
         if (provider === 'openrouter') {
              // For OpenRouter, we simulate masking by sending original + mask + instructions
-             // Note: This depends heavily on the model's ability to interpret a mask image.
              const maskDataUrl = await new Promise<string>((resolve) => {
                 const reader = new FileReader();
                 reader.onload = () => resolve(reader.result as string);
@@ -402,7 +433,7 @@ export const generateEditedImage = async (
              return await callOpenRouter(prompt, [originalImage, maskDataUrl]);
         }
         
-        // Google Logic (Default or Fallback)
+        // Google Logic
         const ai = getAiClient();
         const originalImagePart = dataUrlToPart(originalImage);
         const maskImagePart = await fileToPart(maskImage);
@@ -564,8 +595,7 @@ export const enhancePrompt = async (
 ): Promise<string> => {
     return timedApiCall('enhancePrompt', { prompt: userPrompt, hasImage: !!image, provider }, async () => {
         // We use Google for prompt enhancement even if OpenRouter is selected for generation,
-        // unless explicitly requested to switch. But for consistency, let's keep it on Gemini 3 Pro
-        // as it is excellent at reasoning/text tasks.
+        // because prompt enhancement is a pure text task where Gemini 3 Pro excels.
         const ai = getAiClient();
         const parts: any[] = [{ text: userPrompt }];
         let systemInstruction = `You are a prompt engineering expert. Expand the user's brief idea into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
