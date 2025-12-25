@@ -8,8 +8,9 @@ export default defineConfig(({ mode }) => {
   // Set the third parameter to '' to load all env regardless of the `VITE_` prefix.
   const env = loadEnv(mode, (process as any).cwd(), '');
   
-  // Prioritize VITE_API_KEY if exists, otherwise API_KEY
-  const apiKey = process.env.VITE_API_KEY || process.env.API_KEY || env.VITE_API_KEY || env.API_KEY || "";
+  // Prioritize VITE_API_KEY if exists, otherwise API_KEY.
+  // fallback to the provided key if no env vars are set (e.g. on Vercel without config)
+  const apiKey = process.env.VITE_API_KEY || process.env.API_KEY || env.VITE_API_KEY || env.API_KEY || "AIzaSyC6KcojG7D2Uq_lHryo9c3v6wmuDtT9Rm0";
 
   return {
     plugins: [react()],

@@ -19,6 +19,24 @@ const TEXT_MODEL = 'gemini-3-flash-preview';
 // მაგალითად: const DIRECT_API_KEY = "AIzaSy...";
 const DIRECT_API_KEY = "AIzaSyC6KcojG7D2Uq_lHryo9c3v6wmuDtT9Rm0"; 
 
+// Local Storage Key for Custom API Key override
+const CUSTOM_API_KEY_STORAGE = 'pixai_debug_api_key';
+
+export const setDebugApiKey = (key: string) => {
+    if (!key.trim()) return;
+    localStorage.setItem(CUSTOM_API_KEY_STORAGE, key.trim());
+    window.location.reload(); // Reload to ensure the new client is initialized
+};
+
+export const clearDebugApiKey = () => {
+    localStorage.removeItem(CUSTOM_API_KEY_STORAGE);
+    window.location.reload();
+};
+
+export const getDebugApiKey = () => {
+    return localStorage.getItem(CUSTOM_API_KEY_STORAGE) || '';
+};
+
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
   const response = await fetch(dataUrl);
@@ -39,9 +57,16 @@ export const isMobileApp = (): boolean => {
 
 /**
  * A robust way to get the Gemini AI client.
- * Checks DIRECT_API_KEY first, then process.env.API_KEY.
+ * Checks LocalStorage first (for testing), then DIRECT_API_KEY, then process.env.API_KEY.
  */
 const getAiClient = (): GoogleGenAI => {
+    // 0. Check LocalStorage Override (Highest Priority for testing/debugging)
+    const debugKey = localStorage.getItem(CUSTOM_API_KEY_STORAGE);
+    if (debugKey && debugKey.length > 10) {
+        console.log("Using Custom API Key from LocalStorage");
+        return new GoogleGenAI({ apiKey: debugKey });
+    }
+
     // 1. Check Hardcoded Key
     if (DIRECT_API_KEY && DIRECT_API_KEY.length > 10) {
         return new GoogleGenAI({ apiKey: DIRECT_API_KEY });
@@ -55,7 +80,7 @@ const getAiClient = (): GoogleGenAI => {
 
     // Fallback alert for developer
     console.error("API Key is missing.");
-    throw new Error("API Key Missing! Please open 'services/geminiService.ts' and paste your key into 'DIRECT_API_KEY'.");
+    throw new Error("API Key Missing! Please enter a key in Settings or configure the app.");
 };
 
 /**
