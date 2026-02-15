@@ -43,26 +43,15 @@ const fileToDataUrl = (file: File): Promise<string> => {
 };
 
 /**
- * Processes an image file by resizing it to a dynamically determined maximum dimension
- * and normalizing it to JPEG format. This function balances quality with device performance.
- * @param file The original image file.
- * @returns A promise that resolves to the processed File object in JPEG format.
+ * Processes an image file by resizing it.
+ * CRITICAL FIX: Reduced max dimension to 1536px.
+ * Sending 4K images (4096px) to the free API tier exhausts the "Tokens Per Minute" limit immediately,
+ * causing 429 errors. 1536px is a good balance of quality and quota usage.
  */
 const processImageFile = (file: File): Promise<File> => {
   return new Promise((resolve, reject) => {
-    // Dynamically determine the max dimension based on device memory to prevent crashes on older phones.
-    // 'navigator.deviceMemory' is a hint, values are in GB (e.g., 1, 2, 4, 8).
-    // It's supported in Chrome-based browsers.
-    const deviceMemory = (navigator as any).deviceMemory;
-    let maxDimension = 3072; // A safe, high-quality default for most devices and browsers like Safari/Firefox.
-    if (deviceMemory) {
-        if (deviceMemory >= 4) {
-            maxDimension = 4096; // Use higher resolution for powerful devices.
-        } else {
-            maxDimension = 3072; // Use a safer resolution for mid-range devices.
-        }
-    }
-    console.log(`Processing image with max dimension: ${maxDimension}px (Device Memory: ${deviceMemory || 'N/A'}GB)`);
+    const maxDimension = 1536; // Reduced from 4096 to prevent API blocking
+    console.log(`Processing image with max dimension: ${maxDimension}px (Optimized for Free Tier)`);
 
     const reader = new FileReader();
 
@@ -217,19 +206,15 @@ const App: React.FC = () => {
   const [showWelcomeScreen, setShowWelcomeScreen] = useState(false);
   
   // Admin & AI Panel State
-  // Initialize synchronously from URL to prevent race conditions
   const [isAdminView, setIsAdminView] = useState(() => {
     if (typeof window !== 'undefined') {
         const params = new URLSearchParams(window.location.search);
-        // Use 'panel=secure_dashboard' instead of 'admin=true'
         return params.get('panel') === 'secure_dashboard';
     }
     return false;
   });
 
   const [showAuthScreen, setShowAuthScreen] = useState<boolean>(false);
-  
-  // Toolbar scroll fade state
   const [showScrollFade, setShowScrollFade] = useState(false);
 
   // Masking state
@@ -256,36 +241,29 @@ const App: React.FC = () => {
 
   // Pan & Zoom state
   const imageContainerRef = useRef<HTMLDivElement>(null);
-  // FIX: Add explicit type to `useState` for `viewTransform` to resolve type inference issues.
   const [viewTransform, setViewTransform] = useState<{ scale: number; x: number; y: number; }>({ scale: 1, x: 0, y: 0 });
   const pointers = useRef<Map<number, { x: number, y: number }>>(new Map());
-  // FIX: Add explicit types to refs to resolve type inference issues.
   const panStartCoords = useRef<{ x: number; y: number; }>({ x: 0, y: 0 });
   const lastPan = useRef<{ x: number; y: number; }>({ x: 0, y: 0 });
   const pinchStartDist = useRef(0);
   const lastScale = useRef(1);
   
-  // Mobile detection
   const [isMobile, setIsMobile] = useState(false);
 
   const currentImage = history[historyIndex] ?? null;
   const originalImage = history[0] ?? null;
 
-  // Apply theme on initial load
   useEffect(() => {
     const savedTheme = localStorage.getItem('appTheme') || 'blue';
     document.documentElement.setAttribute('data-theme', savedTheme);
   }, []);
 
-  // Effect for handling the initial loading screen
   useEffect(() => {
     if (!isAuthLoading) {
-        // Start the fade-out animation
         setIsFadingOut(true);
-        // Set a timeout to unmount the loading screen after the animation completes
         const timer = setTimeout(() => {
             setIsAppLoading(false);
-        }, 500); // This duration must match the transition duration in LoadingScreen.tsx
+        }, 500);
         return () => clearTimeout(timer);
     }
   }, [isAuthLoading]);
@@ -298,10 +276,8 @@ const App: React.FC = () => {
     }
   }, [currentImage]);
   
-  // Mobile detection effect
   useEffect(() => {
     const checkIsMobile = () => {
-        // 'pointer: coarse' is a reliable indicator for touch-primary devices.
         const mobileCheck = window.matchMedia('(pointer: coarse)').matches;
         setIsMobile(mobileCheck);
     };
@@ -310,11 +286,7 @@ const App: React.FC = () => {
     return () => window.removeEventListener('resize', checkIsMobile);
   }, []);
 
-  // Admin mode & Analytics Init Effect
   useEffect(() => {
-    // CRITICAL: Wait for auth to finish loading before initializing analytics.
-    // If we init too early, we might sign in anonymously while a Google session 
-    // is trying to restore, causing the session to be lost or overwritten.
     if (isAuthLoading) return;
 
     if (isAdminView) {
@@ -325,7 +297,6 @@ const App: React.FC = () => {
     initAnalytics();
   }, [isAdminView, isAuthLoading]);
 
-  // Effect to check for welcome screen
   useEffect(() => {
     const welcomeScreenAccepted = localStorage.getItem('welcomeScreenAccepted');
     if (welcomeScreenAccepted !== 'true') {
@@ -335,7 +306,6 @@ const App: React.FC = () => {
   
   const isDrawingTabActive = activeTab === 'retouch';
   
-  // Effect to resize mask canvas to match the displayed image
   useEffect(() => {
     const canvas = maskCanvasRef.current;
     const previewCanvas = previewCanvasRef.current;
@@ -384,31 +354,22 @@ const App: React.FC = () => {
     setHasMask(false);
   }, []);
   
-  // Logic for the mobile toolbar scroll fade effect
   const checkScroll = useCallback(() => {
     const el = toolbarRef.current;
     if (el) {
         const isScrollable = el.scrollWidth > el.clientWidth;
-        // Check if scrolled almost to the end (within 1px)
         const isScrolledToEnd = el.scrollWidth - el.scrollLeft - el.clientWidth < 1;
         setShowScrollFade(isScrollable && !isScrolledToEnd);
     }
   }, []);
 
-  // Effect to check scroll state on layout changes and resize
   useEffect(() => {
     const el = toolbarRef.current;
     if (!el) return;
-
-    // Initial check after layout settles
     const timer = setTimeout(checkScroll, 100);
-    
     window.addEventListener('resize', checkScroll);
-    
-    // The ResizeObserver is robust for cases where content might change.
     const observer = new ResizeObserver(checkScroll);
     observer.observe(el);
-
     return () => {
         clearTimeout(timer);
         window.removeEventListener('resize', checkScroll);
@@ -428,11 +389,8 @@ const App: React.FC = () => {
     setError(null);
     setIsLoading(true);
     try {
-        // This function now dynamically determines the best resolution
-        // based on device capabilities to balance quality and performance.
         const processedFile = await processImageFile(file);
         const imageUrl = await fileToDataUrl(processedFile);
-        
         setHistory([imageUrl]);
         setHistoryIndex(0);
         setActiveTab('retouch');
@@ -441,7 +399,7 @@ const App: React.FC = () => {
         resetView();
     } catch (err) {
         console.error("Image processing failed:", err);
-        const errorMessage = err instanceof Error ? err.message : 'The selected image could not be loaded. Please try a different file.';
+        const errorMessage = err instanceof Error ? err.message : 'The selected image could not be loaded.';
         setError(errorMessage);
         setHistory([]);
         setHistoryIndex(-1);
@@ -495,7 +453,7 @@ const App: React.FC = () => {
     } catch (err) {
         const errorMessage = err instanceof Error ? err.message : t('errorUnknown');
         setError(`${t('errorEnhanceFailed')} ${errorMessage}`);
-        return currentPrompt; // Return original on error
+        return currentPrompt;
     } finally {
         setIsEnhancing(false);
     }
@@ -571,13 +529,10 @@ const App: React.FC = () => {
     try {
         let finalImageUrl: string;
         if (currentImage && secondImage) {
-            // Case 3: Compose two images with a prompt
             finalImageUrl = await composeImages(currentImage, secondImage, prompt);
         } else if (currentImage) {
-            // Case 2: Maskless edit on one image
             finalImageUrl = await generateMagicEdit(currentImage, prompt);
         } else {
-            // Case 1: Generate new image from text
             const imageUrl = await generateImageFromText(prompt);
             const watermarkedImageUrl = await addWatermark(imageUrl);
             setHistory([watermarkedImageUrl]);
@@ -628,7 +583,6 @@ const handleResetLogo = useCallback(() => {
 
 
   // --- MASK DRAWING HANDLERS ---
-  // FIX: Update getCoords to handle PointerEvents directly, removing the need for unsafe casting.
   const getCoords = useCallback((e: React.PointerEvent<HTMLDivElement>): { x: number, y: number } | null => {
     const canvas = maskCanvasRef.current;
     if (!canvas) return null;
@@ -640,7 +594,6 @@ const handleResetLogo = useCallback(() => {
     const screenX = clientX - rect.left;
     const screenY = clientY - rect.top;
 
-    // Apply inverse transform to find point on the original, unscaled canvas
     const { scale, x, y } = viewTransform;
     return {
         x: (screenX - x) / scale,
@@ -691,25 +644,20 @@ const handleResetLogo = useCallback(() => {
   
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
-    // FIX: Corrected syntax error from `=>` to `=` in destructuring assignment.
     const { clientX, clientY, pointerId } = e;
     pointers.current.set(pointerId, { x: clientX, y: clientY });
     
     if (pointers.current.size === 1 && isDrawingTabActive) {
         setIsDrawing(true);
-        // FIX: Removed unsafe type cast.
         const coords = getCoords(e);
         if (coords) {
             lastPosition.current = coords;
-            // Draw a dot for single clicks
             draw(coords, {x: coords.x, y: coords.y + 0.1});
             setHasMask(true);
         }
-    } else if (pointers.current.size === 1) { // Pan
+    } else if (pointers.current.size === 1) { 
         panStartCoords.current = { x: clientX - lastPan.current.x, y: clientY - lastPan.current.y };
-    } else if (pointers.current.size === 2) { // Pinch
-// FIX: The type of `pts` was not being inferred correctly, causing "property does not exist on type 'unknown'" errors.
-// Adding an explicit type assertion to ensure TypeScript correctly interprets the array elements as point objects.
+    } else if (pointers.current.size === 2) { 
         const pts = Array.from(pointers.current.values()) as {x: number, y: number}[];
         const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
         pinchStartDist.current = dist;
@@ -724,25 +672,21 @@ const handleResetLogo = useCallback(() => {
     }
 
     if (isDrawing && isDrawingTabActive && pointers.current.size === 1) {
-        // FIX: Removed unsafe type cast.
         const newPosition = getCoords(e);
         if (lastPosition.current && newPosition) {
             draw(lastPosition.current, newPosition);
             lastPosition.current = newPosition;
         }
     } else if (!isDrawing && isDrawingTabActive) {
-        // FIX: Removed unsafe type cast.
         const coords = getCoords(e);
         if(coords) drawBrushPreview(coords);
-    } else if (pointers.current.size === 1 && !isDrawingTabActive) { // Pan
+    } else if (pointers.current.size === 1 && !isDrawingTabActive) { 
         e.preventDefault();
         const currentX = e.clientX - panStartCoords.current.x;
         const currentY = e.clientY - panStartCoords.current.y;
         lastPan.current = { x: currentX, y: currentY };
         setViewTransform(v => ({ ...v, x: currentX, y: currentY }));
-    } else if (pointers.current.size === 2) { // Pinch
-// FIX: The type of `pts` was not being inferred correctly, causing "property does not exist on type 'unknown'" errors.
-// Adding an explicit type assertion to ensure TypeScript correctly interprets the array elements as point objects.
+    } else if (pointers.current.size === 2) { 
         const pts = Array.from(pointers.current.values()) as {x: number, y: number}[];
         const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
         const scale = Math.max(0.1, lastScale.current * (dist / pinchStartDist.current));
@@ -764,10 +708,7 @@ const handleResetLogo = useCallback(() => {
         lastScale.current = viewTransform.scale;
       }
 
-      // BUG FIX: When transitioning from a pinch (2 pointers) to a pan (1 pointer),
-      // we must reset the pan starting coordinates for the remaining pointer to prevent a jump.
       if (pointers.current.size === 1) {
-          // FIX: Add explicit type assertion to resolve 'property does not exist on type unknown' error.
           const remainingPointer = Array.from(pointers.current.values())[0] as { x: number; y: number };
           panStartCoords.current = { 
               x: remainingPointer.x - lastPan.current.x, 
@@ -798,7 +739,6 @@ const handleResetLogo = useCallback(() => {
   }, [canUndo, historyIndex]);
 
   const handleRedo = useCallback(() => {
-    // FIX: Redo should increment the history index, not decrement it.
     if (canRedo) setHistoryIndex(historyIndex + 1);
   }, [canRedo, historyIndex]);
 
@@ -824,7 +764,6 @@ const handleResetLogo = useCallback(() => {
     const imageToSave = activeTab === 'logoMaker' ? logoInProgress : currentImage;
     if (!imageToSave) return;
     
-    // Allow logged in users (not anonymous) to save
     if (!user || user.isAnonymous) {
         setError("You must be logged in to save to the cloud.");
         setShowAuthScreen(true);
@@ -876,7 +815,6 @@ const handleResetLogo = useCallback(() => {
   }
 
   if (isAdminView) {
-    // If auth state is still loading, show a generic spinner to prevent flicker.
     if (isAuthLoading) {
       return (
         <div className="bg-gray-900 min-h-screen w-full flex items-center justify-center">
@@ -885,16 +823,11 @@ const handleResetLogo = useCallback(() => {
       );
     }
     
-    // If not authenticated or IS ANONYMOUS (guest), force login for the admin panel.
-    // Anonymous users are not admins.
     if (!user || user.isAnonymous) {
       return (
         <Suspense fallback={<div className="bg-gray-900 min-h-screen w-full flex items-center justify-center"><Spinner /></div>}>
-          {/* We wrap AuthScreen in a div to provide a consistent background */}
           <div className="bg-gray-900 min-h-screen w-full">
             <AuthScreen onClose={() => {
-              // If the user closes the login modal without signing in,
-              // remove the 'admin' query param and redirect them to the main app.
               const params = new URLSearchParams(window.location.search);
               params.delete('panel');
               const newSearch = params.toString();
@@ -907,7 +840,6 @@ const handleResetLogo = useCallback(() => {
       );
     }
     
-    // If authenticated and not anonymous, show the admin panel.
     return (
       <Suspense fallback={<div className="bg-gray-900 min-h-screen w-full flex items-center justify-center"><Spinner /></div>}>
         <AdminPanelScreen />
@@ -925,10 +857,8 @@ const handleResetLogo = useCallback(() => {
   const isPanningEnabled = !isDrawingTabActive;
 
   const renderEditorContent = () => {
-    // This function is only called when currentImage is not null
     return (
         <>
-            {/* Left Panel: Toolbar */}
             <aside className="w-full md:w-auto flex flex-col gap-4 animate-fade-in-left">
                 <div className="relative w-full md:w-auto bg-gray-800/50 border border-gray-700 rounded-lg backdrop-blur-sm">
                     <div
@@ -959,7 +889,6 @@ const handleResetLogo = useCallback(() => {
                 </div>
             </aside>
 
-            {/* Center Panel: Image Viewer or Logo Placeholder */}
             {activeTab === 'logoMaker' ? (
                 logoInProgress ? (
                     <div className="flex-grow flex items-center justify-center relative overflow-hidden animate-scale-in" ref={imageContainerRef}>
@@ -998,7 +927,7 @@ const handleResetLogo = useCallback(() => {
                         onPointerDown={handlePointerDown}
                         onPointerMove={handlePointerMove}
                         onPointerUp={handlePointerUp}
-                        onPointerLeave={handlePointerUp} // Use up to end gesture
+                        onPointerLeave={handlePointerUp}
                     >
                         <div style={{ transform: `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})`, transformOrigin: 'center center' }}>
                             <>
@@ -1040,7 +969,6 @@ const handleResetLogo = useCallback(() => {
                 </div>
             )}
 
-            {/* Right Panel: Controls */}
             <aside className="w-full md:max-w-sm flex flex-col gap-4 animate-fade-in-right">
                 {error && (
                     <div className="bg-red-500/20 border border-red-500/20 text-red-300 p-4 rounded-lg animate-fade-in">

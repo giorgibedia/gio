@@ -11,8 +11,10 @@ import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 
 // Configuration for Gemini Model
-// Using 'gemini-2.5-flash-image' (Nano Banana) as requested for free/efficient generation.
+// Using 'gemini-2.5-flash-image' (Nano Banana) as requested for efficient generation.
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image'; 
+// Using gemini-2.0-flash for text tasks to save quota on the image model and reduce 429s.
+const TEXT_MODEL = 'gemini-2.0-flash';
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -80,7 +82,7 @@ const getRetryDelay = (error: any): number => {
  */
 const retryOperation = async <T>(
     operation: () => Promise<T>, 
-    maxRetries: number = 3, // Reduced from 5 to prevent long waits
+    maxRetries: number = 3, 
     initialDelay: number = 2000
 ): Promise<T> => {
     let lastError: any;
@@ -128,7 +130,6 @@ const generateWithModel = async (
     ai: GoogleGenAI, 
     params: any
 ): Promise<GenerateContentResponse> => {
-    // console.log(`Attempting generation with ${PRIMARY_IMAGE_MODEL}...`);
     return await retryOperation(() => ai.models.generateContent({
         ...params,
         model: PRIMARY_IMAGE_MODEL
@@ -175,7 +176,6 @@ const timedApiCall = async <T>(
                         });
                     
                     if (uploadError) {
-                        // console.error("Supabase Upload Error:", uploadError);
                         logError('adminUpload', `${uploadError.message} (User: ${userId})`);
                         return;
                     }
@@ -310,9 +310,9 @@ export const getAssistantResponse = async (
     // Basic Chat implementation
     try {
         const ai = getAiClient();
-        // Use gemini-3-flash-preview for fast text responses
+        // Use gemini-2.0-flash for fast, cheap text responses
         const chat = ai.chats.create({
-            model: 'gemini-3-flash-preview',
+            model: TEXT_MODEL,
             history: history,
         });
         const result = await chat.sendMessage({ message: newMessage });
@@ -412,9 +412,9 @@ export const enhancePrompt = async (
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
         }
         
-        // Using Gemini 3 Flash for text capability (Faster/Cheaper)
+        // Using Gemini 2.0 Flash for text capability (Faster/Cheaper)
         const response = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
-            model: 'gemini-3-flash-preview', 
+            model: TEXT_MODEL, 
             contents: { parts: parts },
             config: { systemInstruction: systemInstruction },
         }));
