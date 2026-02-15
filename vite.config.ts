@@ -5,25 +5,19 @@ import react from '@vitejs/plugin-react';
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, (process as any).cwd(), '');
-
-  // Split the key to avoid GitHub scanning detection
-  // Key: AIzaSyDs2Uxc0ATzuQa6SzU61FFr9VO-vQ8Uo84
-  const p1 = "AIzaSyDs2Uxc0AT";
-  const p2 = "zuQa6SzU61FFr9VO-vQ8Uo84";
-  const defaultKey = `${p1}${p2}`;
-
   return {
     plugins: [react()],
     define: {
-      // Use process.env.API_KEY if available (Vercel), otherwise use the split defaultKey
-      'process.env.API_KEY': JSON.stringify(process.env.API_KEY || env.API_KEY || defaultKey),
+      // Default to empty string to prevent 'undefined' injection issues
+      'process.env.API_KEY': JSON.stringify(process.env.API_KEY || env.API_KEY || ""),
     },
     build: {
-      outDir: 'dist',
-      chunkSizeWarningLimit: 1600,
+      outDir: 'dist', // Standard output directory for Vite
+      chunkSizeWarningLimit: 1600, // Increase warning limit to 1600kb
       rollupOptions: {
           output: {
               manualChunks(id) {
+                  // Split third-party libraries into a separate 'vendor' chunk
                   if (id.includes('node_modules')) {
                       return 'vendor';
                   }
