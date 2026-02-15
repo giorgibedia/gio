@@ -44,13 +44,13 @@ const fileToDataUrl = (file: File): Promise<string> => {
 
 /**
  * Processes an image file by resizing it.
- * CRITICAL FIX: Reduced max dimension to 1024px.
+ * CRITICAL FIX: Reduced max dimension to 800px.
  * The Free Tier API quota is extremely sensitive to total pixel count/tokens.
- * 1024px is the industry standard for input images to generative models to ensure stability.
+ * 800px provides a good balance between visibility and API stability.
  */
 const processImageFile = (file: File): Promise<File> => {
   return new Promise((resolve, reject) => {
-    const maxDimension = 1024; // Reduced to 1024px for maximum stability on Free Tier
+    const maxDimension = 800; // Reduced to 800px for maximum stability on Free Tier
     console.log(`Processing image with max dimension: ${maxDimension}px (Optimized for Free Tier)`);
 
     const reader = new FileReader();
@@ -91,7 +91,7 @@ const processImageFile = (file: File): Promise<File> => {
         
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Quality 0.9 is sufficient for input images
+        // Quality 0.85 is sufficient for input images
         canvas.toBlob((blob) => {
           if (!blob) {
             return reject(new Error('Failed to convert canvas to blob during processing.'));
@@ -106,7 +106,7 @@ const processImageFile = (file: File): Promise<File> => {
             lastModified: Date.now(),
           });
           resolve(processedFile);
-        }, 'image/jpeg', 0.9);
+        }, 'image/jpeg', 0.85);
       };
 
       img.onerror = (error) => {

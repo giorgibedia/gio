@@ -36,9 +36,7 @@ export const isMobileApp = (): boolean => {
 
 /**
  * Robustly resizes an image Data URL to ensure it fits within token limits.
- * CRITICAL OPTIMIZATION: Defaults to 512px. 
- * 1024px consumes ~260k tokens. 512px consumes ~65k tokens.
- * This 4x reduction allows the Free Tier to handle multiple requests without 429 errors.
+ * Default is 512px.
  */
 const resizeImageForApi = (dataUrl: string, maxDimension: number = 512): Promise<string> => {
     return new Promise((resolve) => {
@@ -150,9 +148,9 @@ const retryOperation = async <T>(
             if ((isRateLimit || isServerOverload) && i < maxRetries) {
                 let delay = getRetryDelay(error);
                 
-                // If API specifically asks to wait more than 15 seconds, abort to improve UX.
-                // Infinite spinners are worse than an error message.
-                if (delay > 15000) {
+                // Allow slightly longer wait times (up to 25s) before giving up, to handle short spikes
+                // But still fail fast if > 25s to avoid bad UX
+                if (delay > 25000) {
                     throw new Error(`System is currently busy (High Traffic). Please wait ${Math.ceil(delay/1000)} seconds and try again.`);
                 }
 
@@ -406,14 +404,14 @@ export const generateLogo = async (
         let parts: any[] = [{ text: prompt }];
 
         if (backgroundImageDataUrl) {
-            // Aggressively resize background to 512px
-            const resizedBg = await resizeImageForApi(backgroundImageDataUrl, 512);
+            // Aggressively resize background to 256px for context
+            const resizedBg = await resizeImageForApi(backgroundImageDataUrl, 256);
             parts.unshift(dataUrlToPart(resizedBg));
         }
         else if (existingLogoDataUrl) {
-            // CRITICAL FIX: Resize the "logoInProgress" before sending it back to the API.
-            // Sending high-res output back as input explodes token usage. 512px is enough context.
-            const resizedLogo = await resizeImageForApi(existingLogoDataUrl, 512);
+            // CRITICAL FIX: Resize the "logoInProgress" to 256px before sending it back to the API.
+            // 256px is sufficient for context but drastic token saving compared to 1024px.
+            const resizedLogo = await resizeImageForApi(existingLogoDataUrl, 256);
             parts.unshift(dataUrlToPart(resizedLogo));
         }
 
@@ -477,8 +475,8 @@ export const enhancePrompt = async (
         let systemInstruction = `You are a prompt engineering expert. Expand the user's brief idea into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
 
         if (image) {
-            // Resize for text analysis as well to save tokens (512px)
-            const resizedContext = await resizeImageForApi(image, 512); 
+            // Resize for text analysis as well to save tokens (256px for text context is enough)
+            const resizedContext = await resizeImageForApi(image, 256); 
             parts.unshift(dataUrlToPart(resizedContext));
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
         }
