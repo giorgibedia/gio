@@ -10,8 +10,9 @@ import { supabase } from './supabaseClient';
 import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 
-// Configuration for Gemini 3 Pro
-const PRIMARY_IMAGE_MODEL = 'gemini-3-pro-image-preview'; 
+// Configuration for Gemini Model
+// Using 'gemini-2.5-flash-image' (Nano Banana) as requested for free/efficient generation.
+const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash-image'; 
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -35,17 +36,9 @@ export const isMobileApp = (): boolean => {
  * A robust way to get the Gemini AI client.
  */
 const getAiClient = (): GoogleGenAI => {
-    // 1. Try to get key from Environment Variables (Secure & Recommended for Vercel/Local)
-    let apiKey = process.env.API_KEY;
-
-    // 2. Fallback: If no Env Var found (e.g. mobile build, or user hasn't set up Vercel envs),
-    // use the provided production key.
-    if (!apiKey || apiKey === 'undefined' || apiKey === '') {
-        const k1 = "AIzaSyAHBNSNC6";
-        const k2 = "AAPiQqzyMeM-";
-        const k3 = "X2eMlfsQiCzEs";
-        apiKey = `${k1}${k2}${k3}`;
-    }
+    // The API key is injected via vite.config.ts (process.env.API_KEY).
+    // It handles the fallback logic securely.
+    const apiKey = process.env.API_KEY;
 
     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
         const errorMessage = "API Key is not configured. Please reload.";
@@ -243,6 +236,7 @@ const handleSingleApiResponse = (
         throw new Error(`Blocked: ${response.promptFeedback.blockReason}`);
     }
 
+    // Iterate through all parts to find the image, as per SDK guidelines for Flash Image models
     const imagePartFromResponse = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
 
     if (imagePartFromResponse?.inlineData) {
@@ -255,6 +249,7 @@ const handleSingleApiResponse = (
         throw new Error(`AI stopped: ${finishReason}`);
     }
     
+    // Check if there is text content (error message from model) if no image found
     const textFeedback = response.text?.trim();
     throw new Error(`No image returned. AI said: "${textFeedback || 'Unknown error'}"`);
 };
@@ -307,7 +302,20 @@ export const getAssistantResponse = async (
     history: any[],
     newMessage: string
 ): Promise<string> => {
-    return "Assistant is currently disabled.";
+    // Basic Chat implementation
+    try {
+        const ai = getAiClient();
+        // Use gemini-3-flash-preview for fast text responses
+        const chat = ai.chats.create({
+            model: 'gemini-3-flash-preview',
+            history: history,
+        });
+        const result = await chat.sendMessage({ message: newMessage });
+        return result.text || "I'm not sure how to respond to that.";
+    } catch (e) {
+        console.error(e);
+        return "I'm having trouble connecting right now.";
+    }
 };
 
 export const generateImageFromText = async (
@@ -399,9 +407,9 @@ export const enhancePrompt = async (
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
         }
         
-        // Using Gemini 3 Pro text capability
+        // Using Gemini 3 Flash for text capability (Faster/Cheaper)
         const response = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
-            model: 'gemini-3-pro-preview', 
+            model: 'gemini-3-flash-preview', 
             contents: { parts: parts },
             config: { systemInstruction: systemInstruction },
         }));
