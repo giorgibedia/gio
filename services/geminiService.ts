@@ -80,7 +80,7 @@ const getRetryDelay = (error: any): number => {
  */
 const retryOperation = async <T>(
     operation: () => Promise<T>, 
-    maxRetries: number = 5, 
+    maxRetries: number = 3, // Reduced from 5 to prevent long waits
     initialDelay: number = 2000
 ): Promise<T> => {
     let lastError: any;
@@ -100,15 +100,18 @@ const retryOperation = async <T>(
 
             if ((isRateLimit || isServerOverload) && i < maxRetries) {
                 let delay = getRetryDelay(error);
+                
+                // If API specifically asks to wait more than 15 seconds, abort to improve UX.
+                // Infinite spinners are worse than an error message.
+                if (delay > 15000) {
+                    throw new Error(`System is currently busy (High Traffic). Please wait ${Math.ceil(delay/1000)} seconds and try again.`);
+                }
+
                 if (delay === 0) delay = initialDelay * Math.pow(2, i);
 
                 const waitTimeSec = (delay/1000).toFixed(1);
                 console.warn(`API Rate Limit hit. Waiting ${waitTimeSec}s before attempt ${i + 2}/${maxRetries + 1}...`);
                 
-                if (delay > 20000) {
-                    console.log(`%c NOTE: High traffic. AI requires a ${waitTimeSec}s cooldown.`, 'background: #222; color: #bada55; font-size:14px');
-                }
-
                 await wait(delay);
                 continue;
             }
@@ -125,7 +128,7 @@ const generateWithModel = async (
     ai: GoogleGenAI, 
     params: any
 ): Promise<GenerateContentResponse> => {
-    console.log(`Attempting generation with ${PRIMARY_IMAGE_MODEL}...`);
+    // console.log(`Attempting generation with ${PRIMARY_IMAGE_MODEL}...`);
     return await retryOperation(() => ai.models.generateContent({
         ...params,
         model: PRIMARY_IMAGE_MODEL
@@ -156,7 +159,6 @@ const timedApiCall = async <T>(
                     let imageFile: File;
                     
                     if (result.startsWith('http')) {
-                        // For URLs (OpenRouter - kept for backward compat if any logic remains, though logic removed), fetch blob first
                         const res = await fetch(result);
                         const blob = await res.blob();
                         imageFile = new File([blob], filename, { type: blob.type });
@@ -173,7 +175,7 @@ const timedApiCall = async <T>(
                         });
                     
                     if (uploadError) {
-                        console.error("Supabase Upload Error:", uploadError);
+                        // console.error("Supabase Upload Error:", uploadError);
                         logError('adminUpload', `${uploadError.message} (User: ${userId})`);
                         return;
                     }
@@ -189,7 +191,7 @@ const timedApiCall = async <T>(
                     });
 
                 } catch (e) {
-                    console.error("Admin upload failed (non-critical):", e);
+                    // console.error("Admin upload failed (non-critical):", e);
                 }
             })();
         }
@@ -197,7 +199,10 @@ const timedApiCall = async <T>(
         return result;
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
-        logError(featureName, errorMessage);
+        // Don't log rate limit errors as application errors to avoid clutter
+        if (!errorMessage.includes('429') && !errorMessage.includes('busy')) {
+             logError(featureName, errorMessage);
+        }
         console.error(`Error in feature '${featureName}':`, error);
         throw error;
     }

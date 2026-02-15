@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, (process as any).cwd(), '');
 
   // We split the key into parts to prevent GitHub/automated scanners from revoking it.
-  // This allows the key to be embedded directly for Vercel/Local use without an .env file.
+  // API Key: AIzaSyDs2Uxc0ATzuQa6SzU61FFr9VO-vQ8Uo84
   const p1 = "AIzaSyDs2Uxc0AT";
   const p2 = "zuQa6SzU61FFr9VO-vQ8Uo84";
   const defaultKey = `${p1}${p2}`;
