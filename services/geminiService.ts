@@ -35,6 +35,51 @@ export const isMobileApp = (): boolean => {
 };
 
 /**
+ * Robustly resizes an image Data URL to ensure it fits within token limits.
+ * Default max dimension: 1024px (Standard for Nano Banana Free Tier stability).
+ */
+const resizeImageForApi = (dataUrl: string, maxDimension: number = 1024): Promise<string> => {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            let { width, height } = img;
+            // If already small enough, return original
+            if (width <= maxDimension && height <= maxDimension) {
+                resolve(dataUrl);
+                return;
+            }
+            // Calculate new dimensions
+            if (width > height) {
+                height = Math.round(height * (maxDimension / width));
+                width = maxDimension;
+            } else {
+                width = Math.round(width * (maxDimension / height));
+                height = maxDimension;
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            // Draw on white background to handle transparency correctly
+            if (ctx) {
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, width, height);
+                ctx.drawImage(img, 0, 0, width, height);
+                // Export as efficient JPEG
+                resolve(canvas.toDataURL('image/jpeg', 0.85));
+            } else {
+                resolve(dataUrl); // Fallback
+            }
+        };
+        img.onerror = () => {
+            console.warn("Failed to resize image for API, sending original.");
+            resolve(dataUrl);
+        };
+        img.src = dataUrl;
+    });
+};
+
+/**
  * A robust way to get the Gemini AI client.
  */
 const getAiClient = (): GoogleGenAI => {
@@ -267,9 +312,12 @@ export const generateEditedImage = async (
 ): Promise<string> => {
     return timedApiCall('retouch', { prompt: userPrompt, provider: 'google' }, async () => {
         
+        // Ensure input is optimized size
+        const optimizedImage = await resizeImageForApi(originalImage);
+
         // Google Logic
         const ai = getAiClient();
-        const originalImagePart = dataUrlToPart(originalImage);
+        const originalImagePart = dataUrlToPart(optimizedImage);
         const maskImagePart = await fileToPart(maskImage);
         const systemPrompt = `You are a precision digital artist. Edit the image based on the prompt ONLY in the white areas of the mask. The black areas of the mask must remain completely untouched. The edit must be seamless and hyper-realistic.`;
         const prompt = `${systemPrompt}\n\nUser's request: "${userPrompt}"`;
@@ -289,10 +337,13 @@ export const generateBackgroundAlteredImage = async (
 ): Promise<string> => {
     return timedApiCall('background', { prompt: alterationPrompt, provider: 'google' }, async () => {
 
+        // Ensure input is optimized size
+        const optimizedImage = await resizeImageForApi(originalImage);
+
         const ai = getAiClient();
         const systemPrompt = `Isolate the main subject and replace the background. Subject must be preserved perfectly. The new background should realistically match the subject's lighting and perspective.`;
         const finalPrompt = `${systemPrompt}\n\nUser's request: "${alterationPrompt}"`;
-        const originalImagePart = dataUrlToPart(originalImage);
+        const originalImagePart = dataUrlToPart(optimizedImage);
 
         const response = await generateWithModel(ai, {
             contents: { parts: [originalImagePart, { text: finalPrompt }] },
@@ -352,8 +403,16 @@ export const generateLogo = async (
         const prompt = `${systemPrompt}\n\nUser's request: "${userPrompt}"`;
         let parts: any[] = [{ text: prompt }];
 
-        if (backgroundImageDataUrl) parts.unshift(dataUrlToPart(backgroundImageDataUrl));
-        else if (existingLogoDataUrl) parts.unshift(dataUrlToPart(existingLogoDataUrl));
+        if (backgroundImageDataUrl) {
+            const resizedBg = await resizeImageForApi(backgroundImageDataUrl);
+            parts.unshift(dataUrlToPart(resizedBg));
+        }
+        else if (existingLogoDataUrl) {
+            // CRITICAL FIX: Resize the "logoInProgress" before sending it back to the API.
+            // Sending high-res output back as input explodes token usage.
+            const resizedLogo = await resizeImageForApi(existingLogoDataUrl);
+            parts.unshift(dataUrlToPart(resizedLogo));
+        }
 
         const response = await generateWithModel(ai, {
             contents: { parts: parts },
@@ -370,8 +429,11 @@ export const generateMagicEdit = async (
 ): Promise<string> => {
     return timedApiCall('magicEdit', { prompt: userPrompt, provider: 'google' }, async () => {
 
+        // Ensure input is optimized size
+        const optimizedImage = await resizeImageForApi(originalImage);
+
         const ai = getAiClient();
-        const originalImagePart = dataUrlToPart(originalImage);
+        const originalImagePart = dataUrlToPart(optimizedImage);
         const response = await generateWithModel(ai, {
             contents: { parts: [originalImagePart, { text: userPrompt }] },
             config: { responseModalities: [Modality.IMAGE] },
@@ -387,9 +449,13 @@ export const composeImages = async (
 ): Promise<string> => {
     return timedApiCall('composeImages', { prompt: userPrompt, provider: 'google' }, async () => {
 
+        // Ensure both inputs are optimized
+        const optimizedOriginal = await resizeImageForApi(originalImage);
+        const optimizedSecond = await resizeImageForApi(secondImage);
+
         const ai = getAiClient();
-        const originalImagePart = dataUrlToPart(originalImage);
-        const secondImagePart = dataUrlToPart(secondImage);
+        const originalImagePart = dataUrlToPart(optimizedOriginal);
+        const secondImagePart = dataUrlToPart(optimizedSecond);
         const response = await generateWithModel(ai, {
             contents: { parts: [originalImagePart, secondImagePart, { text: userPrompt }] },
             config: { responseModalities: [Modality.IMAGE] },
@@ -408,7 +474,9 @@ export const enhancePrompt = async (
         let systemInstruction = `You are a prompt engineering expert. Expand the user's brief idea into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
 
         if (image) {
-            parts.unshift(dataUrlToPart(image));
+            // Resize for text analysis as well to save tokens
+            const resizedContext = await resizeImageForApi(image, 512); 
+            parts.unshift(dataUrlToPart(resizedContext));
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
         }
         
