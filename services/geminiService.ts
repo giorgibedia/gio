@@ -36,9 +36,11 @@ export const isMobileApp = (): boolean => {
 
 /**
  * Robustly resizes an image Data URL to ensure it fits within token limits.
- * Default max dimension: 1024px (Standard for Nano Banana Free Tier stability).
+ * CRITICAL OPTIMIZATION: Defaults to 512px. 
+ * 1024px consumes ~260k tokens. 512px consumes ~65k tokens.
+ * This 4x reduction allows the Free Tier to handle multiple requests without 429 errors.
  */
-const resizeImageForApi = (dataUrl: string, maxDimension: number = 1024): Promise<string> => {
+const resizeImageForApi = (dataUrl: string, maxDimension: number = 512): Promise<string> => {
     return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
@@ -65,8 +67,8 @@ const resizeImageForApi = (dataUrl: string, maxDimension: number = 1024): Promis
                 ctx.fillStyle = '#FFFFFF';
                 ctx.fillRect(0, 0, width, height);
                 ctx.drawImage(img, 0, 0, width, height);
-                // Export as efficient JPEG
-                resolve(canvas.toDataURL('image/jpeg', 0.85));
+                // Export as efficient JPEG with slightly lower quality to further save bytes
+                resolve(canvas.toDataURL('image/jpeg', 0.8));
             } else {
                 resolve(dataUrl); // Fallback
             }
@@ -312,8 +314,8 @@ export const generateEditedImage = async (
 ): Promise<string> => {
     return timedApiCall('retouch', { prompt: userPrompt, provider: 'google' }, async () => {
         
-        // Ensure input is optimized size
-        const optimizedImage = await resizeImageForApi(originalImage);
+        // Ensure input is optimized size (512px)
+        const optimizedImage = await resizeImageForApi(originalImage, 512);
 
         // Google Logic
         const ai = getAiClient();
@@ -337,8 +339,8 @@ export const generateBackgroundAlteredImage = async (
 ): Promise<string> => {
     return timedApiCall('background', { prompt: alterationPrompt, provider: 'google' }, async () => {
 
-        // Ensure input is optimized size
-        const optimizedImage = await resizeImageForApi(originalImage);
+        // Ensure input is optimized size (512px)
+        const optimizedImage = await resizeImageForApi(originalImage, 512);
 
         const ai = getAiClient();
         const systemPrompt = `Isolate the main subject and replace the background. Subject must be preserved perfectly. The new background should realistically match the subject's lighting and perspective.`;
@@ -404,13 +406,14 @@ export const generateLogo = async (
         let parts: any[] = [{ text: prompt }];
 
         if (backgroundImageDataUrl) {
-            const resizedBg = await resizeImageForApi(backgroundImageDataUrl);
+            // Aggressively resize background to 512px
+            const resizedBg = await resizeImageForApi(backgroundImageDataUrl, 512);
             parts.unshift(dataUrlToPart(resizedBg));
         }
         else if (existingLogoDataUrl) {
             // CRITICAL FIX: Resize the "logoInProgress" before sending it back to the API.
-            // Sending high-res output back as input explodes token usage.
-            const resizedLogo = await resizeImageForApi(existingLogoDataUrl);
+            // Sending high-res output back as input explodes token usage. 512px is enough context.
+            const resizedLogo = await resizeImageForApi(existingLogoDataUrl, 512);
             parts.unshift(dataUrlToPart(resizedLogo));
         }
 
@@ -429,8 +432,8 @@ export const generateMagicEdit = async (
 ): Promise<string> => {
     return timedApiCall('magicEdit', { prompt: userPrompt, provider: 'google' }, async () => {
 
-        // Ensure input is optimized size
-        const optimizedImage = await resizeImageForApi(originalImage);
+        // Ensure input is optimized size (512px)
+        const optimizedImage = await resizeImageForApi(originalImage, 512);
 
         const ai = getAiClient();
         const originalImagePart = dataUrlToPart(optimizedImage);
@@ -449,9 +452,9 @@ export const composeImages = async (
 ): Promise<string> => {
     return timedApiCall('composeImages', { prompt: userPrompt, provider: 'google' }, async () => {
 
-        // Ensure both inputs are optimized
-        const optimizedOriginal = await resizeImageForApi(originalImage);
-        const optimizedSecond = await resizeImageForApi(secondImage);
+        // Ensure both inputs are optimized to 512px
+        const optimizedOriginal = await resizeImageForApi(originalImage, 512);
+        const optimizedSecond = await resizeImageForApi(secondImage, 512);
 
         const ai = getAiClient();
         const originalImagePart = dataUrlToPart(optimizedOriginal);
@@ -474,7 +477,7 @@ export const enhancePrompt = async (
         let systemInstruction = `You are a prompt engineering expert. Expand the user's brief idea into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
 
         if (image) {
-            // Resize for text analysis as well to save tokens
+            // Resize for text analysis as well to save tokens (512px)
             const resizedContext = await resizeImageForApi(image, 512); 
             parts.unshift(dataUrlToPart(resizedContext));
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
