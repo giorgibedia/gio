@@ -26,10 +26,8 @@ export default defineConfig(({ mode }) => {
       }
     },
     server: {
-      headers: {
-        'Cross-Origin-Embedder-Policy': 'require-corp',
-        'Cross-Origin-Opener-Policy': 'same-origin',
-      },
+      port: 3000,
+      host: '0.0.0.0',
     },
   };
 });

@@ -8,6 +8,7 @@
 import React, { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react';
 import { generateEditedImage, generateBackgroundAlteredImage, saveImageToGallery, generateImageFromText, generateMagicEdit, composeImages, generateLogo, dataURLtoFile, enhancePrompt } from './services/geminiService';
 import Header from './components/Header';
+import ModelSelector, { ModelProvider } from './components/ModelSelector';
 import Spinner from './components/Spinner';
 import MaskingToolbar from './components/MaskingToolbar';
 import { UndoIcon, RedoIcon, EyeIcon, MagicWandIcon, PhotoIcon, BrushIcon, EraserIcon, CloudArrowUpIcon, SparkleIcon } from './components/icons';
@@ -215,6 +216,21 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('retouch');
   const [page, setPage] = useState<Page>('main');
   const [showWelcomeScreen, setShowWelcomeScreen] = useState(false);
+  
+  const [modelProvider, setModelProvider] = useState<ModelProvider>(() => {
+      try {
+          return (localStorage.getItem('modelProvider') as ModelProvider) || 'google';
+      } catch (_) {
+          return 'google';
+      }
+  });
+
+  const handleProviderChange = (provider: ModelProvider) => {
+      setModelProvider(provider);
+      try {
+          localStorage.setItem('modelProvider', provider);
+      } catch (_) {}
+  };
   
   // Admin & AI Panel State
   // Initialize synchronously from URL to prevent race conditions
@@ -1042,6 +1058,12 @@ const handleResetLogo = useCallback(() => {
 
             {/* Right Panel: Controls */}
             <aside className="w-full md:max-w-sm flex flex-col gap-4 animate-fade-in-right">
+                <ModelSelector 
+                    currentProvider={modelProvider} 
+                    onProviderChange={handleProviderChange}
+                    disabled={isLoading || isEnhancing}
+                />
+
                 {error && (
                     <div className="bg-red-500/20 border border-red-500/20 text-red-300 p-4 rounded-lg animate-fade-in">
                         <h4 className="font-bold">{t('errorOccurred')}</h4>

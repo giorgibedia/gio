@@ -29,10 +29,10 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ currentProvider, onProvid
                         ? 'bg-[var(--color-primary-500)] text-white shadow-md'
                         : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
                 }`}
-                title="Google Gemini 3 Pro (Native)"
+                title="Google Gemini 2.5 Flash (Native)"
             >
                 <SparkleIcon className="w-3.5 h-3.5" />
-                <span>Gemini 3 Pro</span>
+                <span>Gemini 2.5 Flash</span>
             </button>
             <button
                 onClick={() => onProviderChange('openrouter')}
@@ -42,10 +42,10 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ currentProvider, onProvid
                         ? 'bg-purple-600 text-white shadow-md'
                         : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
                 }`}
-                title="OpenRouter Gemini 2.5 Flash (Nano Banana)"
+                title="Kie.ai Nano Banana 2"
             >
                 <GlobeAltIcon className="w-3.5 h-3.5" />
-                <span>Gemini 2.5 Flash NB</span>
+                <span>Kie.ai Nano Banana</span>
             </button>
         </div>
     );

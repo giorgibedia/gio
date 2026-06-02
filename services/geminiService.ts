@@ -4,14 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import { GoogleGenAI, GenerateContentResponse, Modality } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse, Modality } from "@google/genai/web";
 import { logAction, logError, getUserId } from './analyticsService';
 import { supabase } from './supabaseClient';
 import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
+import { generateWithNanoBanana2, getPublicUrlForImage, getPublicUrlForFile } from './kieService';
 
-// Configuration for Gemini 3 Pro
-const PRIMARY_IMAGE_MODEL = 'gemini-3-pro-image-preview'; 
+// Configuration for Gemini 2.5 Flash
+const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash'; 
 
 // Helper to convert a data URL string to a File object for saving.
 export const dataURLtoFile = async (dataUrl: string, filename:string): Promise<File> => {
@@ -273,11 +274,31 @@ const handleSingleApiResponse = (
 };
 
 
+const getActiveProvider = (): 'google' | 'openrouter' => {
+    try {
+        return (localStorage.getItem('modelProvider') as 'google' | 'openrouter') || 'google';
+    } catch (_) {
+        return 'google';
+    }
+};
+
 export const generateEditedImage = async (
     originalImage: string,
     userPrompt: string,
     maskImage: File
 ): Promise<string> => {
+    const provider = getActiveProvider();
+    if (provider === 'openrouter') {
+        return timedApiCall('retouch', { prompt: userPrompt, provider: 'openrouter' }, async () => {
+            const originalUrl = await getPublicUrlForImage(originalImage);
+            const maskUrl = await getPublicUrlForFile(maskImage);
+            return generateWithNanoBanana2(
+                `Edit the original image inside the white mask area. Changing request: "${userPrompt}"`,
+                [originalUrl, maskUrl]
+            );
+        });
+    }
+
     return timedApiCall('retouch', { prompt: userPrompt, provider: 'google' }, async () => {
         
         // Google Logic
@@ -300,6 +321,17 @@ export const generateBackgroundAlteredImage = async (
     originalImage: string,
     alterationPrompt: string
 ): Promise<string> => {
+    const provider = getActiveProvider();
+    if (provider === 'openrouter') {
+        return timedApiCall('background', { prompt: alterationPrompt, provider: 'openrouter' }, async () => {
+            const originalUrl = await getPublicUrlForImage(originalImage);
+            return generateWithNanoBanana2(
+                `Isolate the main subject and replace the background as requested: "${alterationPrompt}"`,
+                [originalUrl]
+            );
+        });
+    }
+
     return timedApiCall('background', { prompt: alterationPrompt, provider: 'google' }, async () => {
 
         const ai = getAiClient();
@@ -326,6 +358,13 @@ export const getAssistantResponse = async (
 export const generateImageFromText = async (
     prompt: string
 ): Promise<string> => {
+    const provider = getActiveProvider();
+    if (provider === 'openrouter') {
+        return timedApiCall('generateImage', { prompt, provider: 'openrouter' }, async () => {
+            return generateWithNanoBanana2(prompt, []);
+        });
+    }
+
     return timedApiCall('generateImage', { prompt, provider: 'google' }, async () => {
 
         const ai = getAiClient();
@@ -342,6 +381,22 @@ export const generateLogo = async (
     existingLogoDataUrl?: string | null,
     backgroundImageDataUrl?: string | null
 ): Promise<string> => {
+    const provider = getActiveProvider();
+    if (provider === 'openrouter') {
+        return timedApiCall('generateLogo', { prompt: userPrompt, provider: 'openrouter' }, async () => {
+            const urls: string[] = [];
+            if (backgroundImageDataUrl) {
+                urls.push(await getPublicUrlForImage(backgroundImageDataUrl));
+            } else if (existingLogoDataUrl) {
+                urls.push(await getPublicUrlForImage(existingLogoDataUrl));
+            }
+            return generateWithNanoBanana2(
+                `Create a high-quality professional logo based on the description. User's request: "${userPrompt}"`,
+                urls
+            );
+        });
+    }
+
     return timedApiCall('generateLogo', { prompt: userPrompt, provider: 'google' }, async () => {
 
         const ai = getAiClient();
@@ -368,6 +423,14 @@ export const generateMagicEdit = async (
     originalImage: string,
     userPrompt: string
 ): Promise<string> => {
+    const provider = getActiveProvider();
+    if (provider === 'openrouter') {
+        return timedApiCall('magicEdit', { prompt: userPrompt, provider: 'openrouter' }, async () => {
+            const originalUrl = await getPublicUrlForImage(originalImage);
+            return generateWithNanoBanana2(userPrompt, [originalUrl]);
+        });
+    }
+
     return timedApiCall('magicEdit', { prompt: userPrompt, provider: 'google' }, async () => {
 
         const ai = getAiClient();
@@ -385,6 +448,15 @@ export const composeImages = async (
     secondImage: string,
     userPrompt: string
 ): Promise<string> => {
+    const provider = getActiveProvider();
+    if (provider === 'openrouter') {
+        return timedApiCall('composeImages', { prompt: userPrompt, provider: 'openrouter' }, async () => {
+            const originalUrl = await getPublicUrlForImage(originalImage);
+            const secondUrl = await getPublicUrlForImage(secondImage);
+            return generateWithNanoBanana2(userPrompt, [originalUrl, secondUrl]);
+        });
+    }
+
     return timedApiCall('composeImages', { prompt: userPrompt, provider: 'google' }, async () => {
 
         const ai = getAiClient();
@@ -412,9 +484,9 @@ export const enhancePrompt = async (
             systemInstruction = `You are a prompt engineering expert. Analyze the provided image and the user's brief instruction. Expand it into a detailed prompt for high-quality image generation. Respond ONLY with the enhanced prompt.`;
         }
         
-        // Using Gemini 3 Pro text capability
+        // Using Gemini 2.5 Flash
         const response = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
-            model: 'gemini-3-pro-preview', 
+            model: 'gemini-2.5-flash', 
             contents: { parts: parts },
             config: { systemInstruction: systemInstruction },
         }));
