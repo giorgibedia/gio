@@ -36,11 +36,12 @@ const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect }) => {
       <div className="w-full max-w-7xl mx-auto px-4 sm:px-8 flex-grow flex flex-col items-center justify-center text-center">
         {/* Main CTA Section */}
         <div className="animate-fade-in my-12 w-full">
-            <div className="mb-10 max-w-3xl mx-auto flex items-center justify-center gap-4 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-left backdrop-blur-sm shadow-lg shadow-red-900/20">
-                <ExclamationTriangleIcon className="w-8 h-8 text-red-400 flex-shrink-0 animate-pulse" />
-                <div>
-                    <p className="text-red-200 font-bold text-lg">{t('testModeMessage' as any)}</p>
-                </div>
+            {/* Elegant, Human-designed Announcement Banner */}
+            <div className="mb-10 max-w-sm mx-auto py-2.5 px-4 rounded-full bg-gray-900/40 border border-gray-750 text-center backdrop-blur-sm shadow-sm flex items-center justify-center gap-2">
+                <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 ring-4 ring-emerald-500/10 flex-shrink-0"></span>
+                <span className="text-gray-200 font-medium text-xs tracking-wide">
+                    საიტი დიდი ხნის შემდეგ დაბრუნდა!
+                </span>
             </div>
 
             <h1 className="text-5xl font-extrabold tracking-tight text-gray-100 sm:text-6xl md:text-7xl">

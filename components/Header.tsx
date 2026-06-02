@@ -99,13 +99,16 @@ const Header: React.FC<HeaderProps> = ({ onHomeClick, onAboutClick, onGalleryCli
     <header className="w-full py-4 px-4 sm:px-8 border-b border-gray-700 bg-gray-800/30 backdrop-blur-sm sticky top-0 z-50">
       <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <button 
-                onClick={onHomeClick} 
-                className="flex items-center gap-1 text-base font-semibold text-gray-300 hover:text-white transition-colors"
-            >
-                {isEditing && <ChevronLeftIcon className="w-4 h-4" />}
-                <span>{t('home')}</span>
-            </button>
+            {isEditing && (
+              <button 
+                  onClick={onHomeClick} 
+                  className="flex items-center gap-1 text-base font-semibold text-gray-300 hover:text-white transition-colors"
+                  title="Back"
+                  aria-label="Back"
+              >
+                  <ChevronLeftIcon className="w-5 h-5" />
+              </button>
+            )}
             <button 
                 onClick={onAboutClick} 
                 className="text-base font-semibold text-gray-300 hover:text-white transition-colors"
@@ -114,24 +117,31 @@ const Header: React.FC<HeaderProps> = ({ onHomeClick, onAboutClick, onGalleryCli
             </button>
           </div>
           
-          <div className="flex items-center justify-center gap-3 absolute left-1/2 -translate-x-1/2">
-              <SparkleIcon className="w-6 h-6 text-[var(--color-primary-400)]" />
+          <button 
+              onClick={onHomeClick}
+              className="flex items-center justify-center gap-3 absolute left-1/2 -translate-x-1/2 hover:opacity-85 active:scale-95 transition-all"
+              title="Home"
+              aria-label="Home"
+          >
+              <SparkleIcon className="w-6 h-6 text-[var(--color-primary-400)] text-yellow-500 animate-[pulse_2s_infinite]" />
               <h1 className="text-xl font-bold tracking-tight text-gray-100 hidden sm:inline">
                 PixAI
               </h1>
               <span className="ml-1 text-xs font-mono bg-[var(--color-primary-500)]/30 text-[var(--color-primary-300)] px-2 py-0.5 rounded-full tracking-wider hidden sm:inline">Stable</span>
-          </div>
+          </button>
 
           <div className="flex items-center gap-3">
             <LanguageSelector />
-            <button 
-                onClick={onSettingsClick}
-                className="flex items-center gap-1 p-2 rounded-md transition-colors bg-white/10 text-gray-200 hover:bg-white/20"
-                title={t('profileSettings')}
-                aria-label={t('profileSettings')}
-            >
-                <Cog6ToothIcon className="w-5 h-5" />
-            </button>
+            {!isGuest && (
+              <button 
+                  onClick={onSettingsClick}
+                  className="flex items-center gap-1 p-2 rounded-md transition-colors bg-white/10 text-gray-200 hover:bg-white/20"
+                  title={t('profileSettings')}
+                  aria-label={t('profileSettings')}
+              >
+                  <Cog6ToothIcon className="w-5 h-5" />
+              </button>
+            )}
             <div className="relative" ref={userMenuRef}>
                 {isGuest ? (
                     <button 

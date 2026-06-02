@@ -1210,8 +1210,8 @@ const handleResetLogo = useCallback(() => {
 
   const renderAppBody = () => {
       if (page === 'about') return <AboutScreen />;
-      if (page === 'gallery') return <GalleryScreenLazy onClose={() => setPage('main')} userId={user?.uid} />;
-      if (page === 'settings') return <ProfileSettingsScreen onClose={() => setPage('main')} />;
+      if (page === 'gallery' && user && !user.isAnonymous) return <GalleryScreenLazy onClose={() => setPage('main')} userId={user?.uid} />;
+      if (page === 'settings' && user && !user.isAnonymous) return <ProfileSettingsScreen onClose={() => setPage('main')} />;
 
       if (!currentImage) {
           return (
