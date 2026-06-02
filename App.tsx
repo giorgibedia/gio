@@ -14,7 +14,6 @@ import MaskingToolbar from './components/MaskingToolbar';
 import { UndoIcon, RedoIcon, EyeIcon, MagicWandIcon, PhotoIcon, BrushIcon, EraserIcon, CloudArrowUpIcon, SparkleIcon } from './components/icons';
 import StartScreen from './components/StartScreen';
 import { useTranslations } from './useTranslations';
-import Assistant from './components/Assistant';
 import { init as initAnalytics } from './services/analyticsService';
 import { useAuth } from './AuthContext';
 import LoadingScreen from './components/LoadingScreen';
@@ -1292,7 +1291,6 @@ const handleResetLogo = useCallback(() => {
             )}
         </footer>
         
-        <Assistant />
 
         <Suspense fallback={<div className="fixed inset-0 bg-black/60 flex items-center justify-center"><Spinner /></div>}>
             {showAuthScreen && <AuthScreen onClose={() => setShowAuthScreen(false)} />}
