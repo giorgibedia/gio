@@ -241,8 +241,11 @@ const AdminImageFeedPanel: React.FC<AdminImageFeedPanelProps> = ({ analytics }) 
                                 
                                 {expandedActionId === action.id && (
                                     <div className="p-4 border-t border-gray-700/80 bg-black/20 animate-fade-in">
-                                        <a href={action.details.imageUrl} target="_blank" rel="noopener noreferrer">
-                                            <img src={action.details.imageUrl} alt={action.details.prompt} className="w-full max-w-sm mx-auto rounded-lg mb-4 border border-gray-600" />
+                                        <a href={action.details.imageUrl} target="_blank" rel="noopener noreferrer" className="block relative max-w-sm mx-auto group">
+                                            <img src={action.details.imageUrl} alt={action.details.prompt} className="w-full rounded-lg mb-4 border border-gray-600" />
+                                            <div className="absolute bottom-6 right-3 bg-black/40 backdrop-blur-[1px] px-1.5 py-0.5 rounded text-[9px] font-bold text-white/50 tracking-wider pointer-events-none uppercase">
+                                              MADE BY GB
+                                            </div>
                                         </a>
                                         <div className="space-y-3 text-sm">
                                             <div>

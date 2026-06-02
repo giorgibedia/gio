@@ -57,12 +57,15 @@ const AdminActionDetailModal: React.FC<AdminActionDetailModalProps> = ({ action,
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
                     {action.details?.imageUrl && (
                         <div className="text-center">
-                             <a href={action.details.imageUrl} target="_blank" rel="noopener noreferrer">
+                             <a href={action.details.imageUrl} target="_blank" rel="noopener noreferrer" className="relative inline-block mx-auto group">
                                 <img 
                                     src={action.details.imageUrl} 
                                     alt={action.details.prompt || 'Generated Image'} 
                                     className="max-w-full max-h-80 mx-auto rounded-lg border border-gray-600" 
                                 />
+                                <div className="absolute bottom-2 right-2 bg-black/40 backdrop-blur-[1px] px-1.5 py-0.5 rounded text-[9px] font-bold text-white/50 tracking-wider pointer-events-none uppercase">
+                                  MADE BY GB
+                                </div>
                              </a>
                         </div>
                     )}

@@ -8,8 +8,8 @@ import { createClient } from '@supabase/supabase-js';
 // The Anon key is safe to be exposed in a browser client.
 // For true security, you MUST configure Row Level Security (RLS) policies
 // in your Supabase dashboard.
-const supabaseUrl = 'https://xigkbkbcfouijlkfwtqn.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhpZ2tia2JjZm91aWpsa2Z3dHFuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEzMjExMzYsImV4cCI6MjA3Njg5NzEzNn0.UoZYeNhxNguOi-GeRKG9-JFLNX9uYXW0167o_sKHJJM';
+const supabaseUrl = 'https://ozjubwksqhekupplleqx.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96anVid2tzcWhla3VwcGxsZXF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzODI4MDMsImV4cCI6MjA5NTk1ODgwM30.9rDSYfamGJgu7bNThgD9_wOgicJENLxOxQ0gki4my5c';
 
 if (!supabaseUrl || !supabaseAnonKey) {
     console.error('Supabase URL or Anon Key is missing. Make sure to set them in services/supabaseClient.ts');

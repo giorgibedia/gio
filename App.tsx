@@ -73,6 +73,7 @@ const processImageFile = (file: File): Promise<File> => {
       }
 
       const img = new Image();
+      img.crossOrigin = "anonymous";
       img.onload = () => {
         let { width, height } = img;
 
@@ -141,8 +142,14 @@ const processImageFile = (file: File): Promise<File> => {
 
 // Helper function to add a watermark to an image data URL
 const addWatermark = (dataUrl: string): Promise<string> => {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
+    if (!dataUrl) {
+      resolve(dataUrl);
+      return;
+    }
+
     const img = new Image();
+    img.crossOrigin = "anonymous";
     img.onload = () => {
       const canvas = document.createElement('canvas');
       canvas.width = img.naturalWidth;
@@ -150,47 +157,69 @@ const addWatermark = (dataUrl: string): Promise<string> => {
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
       if (!ctx) {
-        return reject(new Error('Could not get 2D context from canvas for watermarking.'));
+        resolve(dataUrl);
+        return;
       }
 
       // Draw the original image
       ctx.drawImage(img, 0, 0);
 
       // --- Smart Watermark Check ---
-      // Check for a magic pixel at (0, 0) to see if watermark already exists
-      const markerPixel = ctx.getImageData(0, 0, 1, 1).data;
-      // R=1, G=2, B=3, A=255 is our unique marker
-      if (markerPixel[0] === 1 && markerPixel[1] === 2 && markerPixel[2] === 3 && markerPixel[3] === 255) {
-        console.log("Watermark already exists. Skipping.");
-        resolve(dataUrl); // Resolve with the original image
-        return;
+      try {
+        // Check for a magic pixel at (0, 0) to see if watermark already exists
+        const markerPixel = ctx.getImageData(0, 0, 1, 1).data;
+        // R=1, G=2, B=3, A=255 is our unique marker
+        if (markerPixel[0] === 1 && markerPixel[1] === 2 && markerPixel[2] === 3 && markerPixel[3] === 255) {
+          console.log("Watermark already exists. Skipping.");
+          resolve(dataUrl); // Resolve with the original image
+          return;
+        }
+      } catch (err) {
+        // If reading pixel data fails due to CORS, we can still attempt to apply the watermark
+        // because writing on a canvas is allowed. Only reading via toDataURL/getImageData raises errors.
+        console.warn("Could not check magic pixel data due to CORS restriction. Drawing watermark anyway.", err);
       }
 
       // --- Watermark styling ---
-      // Make font size proportional to image height, with a minimum size
-      const fontSize = Math.max(14, Math.round(canvas.height * 0.025)); 
+      // Make font size proportional to image height, with a minimum size of 12px
+      const fontSize = Math.max(12, Math.round(canvas.height * 0.022)); 
       ctx.font = `bold ${fontSize}px "Inter", sans-serif`;
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'; // White with 50% opacity
+      
+      // Draw transparent shadow for readability on all backgrounds
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
       ctx.textAlign = 'right';
       ctx.textBaseline = 'bottom';
       
-      // --- Watermark position ---
-      const margin = Math.round(canvas.height * 0.02); // Margin proportional to image size
+      const margin = Math.max(10, Math.round(canvas.height * 0.015)); // Margin proportional to image size
       const x = canvas.width - margin;
       const y = canvas.height - margin;
 
-      // Draw the watermark text
-      ctx.fillText('By G.B', x, y);
+      // Draw shadow first
+      ctx.fillText('MADE BY GB', x + 1, y + 1);
+
+      // Draw crisp white text with 45% opacity
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.fillText('MADE BY GB', x, y);
 
       // --- Add the magic pixel marker ---
-      ctx.fillStyle = 'rgba(1, 2, 3, 1)'; // Our unique, nearly invisible marker color
-      ctx.fillRect(0, 0, 1, 1);
+      try {
+        ctx.fillStyle = 'rgba(1, 2, 3, 1)'; // Our unique, nearly invisible marker color
+        ctx.fillRect(0, 0, 1, 1);
+      } catch (e) {
+        // Ignore errors when drawing magic pixel
+      }
 
       // Get the new data URL and resolve
-      resolve(canvas.toDataURL('image/png'));
+      try {
+        resolve(canvas.toDataURL('image/png'));
+      } catch (err) {
+        console.warn("Could not convert canvas toDataURL due to CORS restriction. Displaying original.", err);
+        resolve(dataUrl);
+      }
     };
     img.onerror = () => {
-      reject(new Error('Image could not be loaded for watermarking.'));
+      console.warn("Watermarking: Image failed to load under CORS, returning original.");
+      resolve(dataUrl);
     };
     img.src = dataUrl;
   });
@@ -987,7 +1016,7 @@ const handleResetLogo = useCallback(() => {
                             onPointerUp={handlePointerUp}
                             onPointerLeave={handlePointerUp}
                         >
-                            <div style={{ transform: `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})`, transformOrigin: 'center center' }}>
+                            <div style={{ transform: `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})`, transformOrigin: 'center center' }} className="relative select-none">
                                 <img
                                     ref={imgRef}
                                     src={logoInProgress}
@@ -995,6 +1024,9 @@ const handleResetLogo = useCallback(() => {
                                     className="max-w-full max-h-[55vh] md:max-h-[80vh] object-contain rounded-lg shadow-2xl"
                                     draggable="false"
                                 />
+                                <div className="absolute bottom-3 right-3 bg-black/40 backdrop-blur-[2px] px-2 py-0.5 rounded text-[10px] font-bold text-white/50 tracking-wider pointer-events-none uppercase select-none">
+                                  MADE BY GB
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1016,7 +1048,7 @@ const handleResetLogo = useCallback(() => {
                         onPointerUp={handlePointerUp}
                         onPointerLeave={handlePointerUp} // Use up to end gesture
                     >
-                        <div style={{ transform: `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})`, transformOrigin: 'center center' }}>
+                        <div style={{ transform: `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})`, transformOrigin: 'center center' }} className="relative select-none">
                             <>
                                 <img
                                     ref={imgRef}
@@ -1024,7 +1056,11 @@ const handleResetLogo = useCallback(() => {
                                     alt="Editable"
                                     className="max-w-full max-h-[55vh] md:max-h-[80vh] object-contain rounded-lg shadow-2xl"
                                     draggable="false"
+                                    crossOrigin="anonymous"
                                 />
+                                <div className="absolute bottom-3 right-3 bg-black/40 backdrop-blur-[2px] px-2 py-0.5 rounded text-[10px] font-bold text-white/50 tracking-wider pointer-events-none uppercase select-none z-10">
+                                  MADE BY GB
+                                </div>
                                 {isDrawingTabActive && (
                                     <>
                                       <canvas

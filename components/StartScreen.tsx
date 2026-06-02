@@ -135,6 +135,9 @@ const GalleryImageCard: React.FC<{ image: SupabaseStoredImage; onDelete: (name: 
     return (
         <div className="relative group aspect-square overflow-hidden rounded-xl border border-gray-700/50 shadow-lg">
             <img loading="lazy" src={imageUrl} alt={`Saved at ${new Date(image.timestamp).toLocaleString()}`} className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" />
+            <div className="absolute bottom-2 right-2 bg-black/40 backdrop-blur-[1px] px-1.5 py-0.5 rounded text-[9px] font-bold text-white/50 tracking-wider pointer-events-none uppercase z-10">
+              MADE BY GB
+            </div>
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
                 <div className="flex items-center justify-center gap-2 transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
                     <button onClick={handleDownload} className="flex items-center gap-2 bg-[var(--color-primary-600)]/90 text-white font-bold py-2 px-4 rounded-full text-sm hover:bg-[var(--color-primary-500)] transition-colors">
