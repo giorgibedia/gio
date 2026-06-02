@@ -106,7 +106,7 @@ const AdminApiKeysPanel: React.FC = () => {
                 {/* Gemini Model API Key */}
                 <div className="space-y-2">
                     <label className="block text-sm font-bold text-gray-300">
-                        Default Google Gemini API Key
+                        Default Gemini API Key
                     </label>
                     <div className="relative">
                         <input
@@ -125,14 +125,14 @@ const AdminApiKeysPanel: React.FC = () => {
                         </button>
                     </div>
                     <p className="text-xs text-gray-400">
-                        Used for image generation, edits, background variations, and prompt expansion.
+                        Used for AI-assisted prompt enhancement.
                     </p>
                 </div>
 
                 {/* Kie.ai API Key */}
                 <div className="space-y-2">
                     <label className="block text-sm font-bold text-gray-300">
-                        Default Kie.ai (Nano Banana 2) API Key
+                        Default Kie.ai API Key
                     </label>
                     <div className="relative">
                         <input
@@ -151,7 +151,7 @@ const AdminApiKeysPanel: React.FC = () => {
                         </button>
                     </div>
                     <p className="text-xs text-gray-400">
-                        Used as the primary engine for high-fidelity realistic edits under "Nano Banana" presets.
+                        Used as the primary engine for high-fidelity image generation and editing.
                     </p>
                 </div>
 

@@ -1094,11 +1094,6 @@ const handleResetLogo = useCallback(() => {
 
             {/* Right Panel: Controls */}
             <aside className="w-full md:max-w-sm flex flex-col gap-4 animate-fade-in-right">
-                <ModelSelector 
-                    currentProvider={modelProvider} 
-                    onProviderChange={handleProviderChange}
-                    disabled={isLoading || isEnhancing}
-                />
 
                 {error && (
                     <div className="bg-red-500/20 border border-red-500/20 text-red-300 p-4 rounded-lg animate-fade-in">

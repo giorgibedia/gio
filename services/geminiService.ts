@@ -279,11 +279,7 @@ const handleSingleApiResponse = (
 
 
 const getActiveProvider = (): 'google' | 'openrouter' => {
-    try {
-        return (localStorage.getItem('modelProvider') as 'google' | 'openrouter') || 'google';
-    } catch (_) {
-        return 'google';
-    }
+    return 'openrouter';
 };
 
 export const generateEditedImage = async (
