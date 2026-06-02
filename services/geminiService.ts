@@ -9,6 +9,7 @@ import { logAction, logError, getUserId } from './analyticsService';
 import { supabase } from './supabaseClient';
 import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
+import { getSyncedGeminiKey } from './keySyncService';
 import { generateWithNanoBanana2, getPublicUrlForImage, getPublicUrlForFile } from './kieService';
 
 // Configuration for Gemini 2.5 Flash
@@ -36,24 +37,27 @@ export const isMobileApp = (): boolean => {
  * A robust way to get the Gemini AI client.
  */
 const getAiClient = (): GoogleGenAI => {
-    // 0. Check for a custom user-provided API key in localStorage (e.g., when deployed on Vercel without env vars)
-    let apiKey = '';
-    try {
-        const savedKey = localStorage.getItem('user_gemini_api_key');
-        if (savedKey && savedKey.trim() !== '') {
-            apiKey = savedKey.trim();
+    // 0. Check for a synced key from database settings (Admin configuration)
+    let apiKey = getSyncedGeminiKey();
+
+    // 1. Check for a custom user-provided API key in localStorage (if any legacy override exists)
+    if (!apiKey) {
+        try {
+            const savedKey = localStorage.getItem('user_gemini_api_key');
+            if (savedKey && savedKey.trim() !== '') {
+                apiKey = savedKey.trim();
+            }
+        } catch (err) {
+            console.warn("Could not read user_gemini_api_key from localStorage:", err);
         }
-    } catch (err) {
-        console.warn("Could not read user_gemini_api_key from localStorage:", err);
     }
 
     if (!apiKey) {
-        // 1. Try to get key from Environment Variables (Secure & Recommended for Vercel/Local)
+        // 2. Try to get key from Environment Variables (Secure & Recommended for Vercel/Local)
         apiKey = process.env.API_KEY || ((import.meta as any).env ? (import.meta as any).env.VITE_API_KEY : '') || '';
     }
 
-    // 2. Fallback: If no Env Var found (e.g. mobile build, or user hasn't set up Vercel envs),
-    // use the provided production key.
+    // 3. Fallback: If no Key or Env Var found, use the provided production key.
     if (!apiKey || apiKey === 'undefined' || apiKey === '') {
         const k1 = "AIzaSyAHBNSNC6";
         const k2 = "AAPiQqzyMeM-";

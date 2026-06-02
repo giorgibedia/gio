@@ -5,6 +5,7 @@
 
 import { supabase } from './supabaseClient';
 import { getUserId } from './analyticsService';
+import { getSyncedKieKey } from './keySyncService';
 
 // Helper to convert a data URL string to a File object for saving.
 const dataURLtoFile = async (dataUrl: string, filename: string): Promise<File> => {
@@ -117,6 +118,13 @@ export const getPublicUrlForFile = async (file: File): Promise<string> => {
  * Retrieves the Kie.ai API Key from localStorage or environment variables, defaulting to the requested production key.
  */
 export const getKieApiKey = (): string => {
+    // 0. Check for a synced key from database settings (Admin configuration)
+    const dbKey = getSyncedKieKey();
+    if (dbKey && dbKey.trim() !== '') {
+        return dbKey.trim();
+    }
+
+    // 1. Check for a custom user-provided API key in localStorage (legacy override)
     try {
         const savedKey = localStorage.getItem('user_kie_api_key');
         if (savedKey && savedKey.trim() !== '') {

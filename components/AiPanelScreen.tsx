@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 // FIX: `database` and `isFirebaseConfigured` are exported from `firebase.ts`, not `analyticsService.ts`.
 import { database, isFirebaseConfigured, auth } from '../services/firebase';
 import { ref, onValue, off } from 'firebase/database';
-import { ChartBarIcon, UsersIcon, ShieldExclamationIcon, ClipboardDocumentListIcon, WrenchScrewdriverIcon, CubeIcon } from './icons';
+import { ChartBarIcon, UsersIcon, ShieldExclamationIcon, ClipboardDocumentListIcon, WrenchScrewdriverIcon, CubeIcon, KeyIcon } from './icons';
 import Spinner from './Spinner';
 import AdminDashboardPanel from './AdminDashboardPanel';
 import AdminUsersPanel from './AdminUsersPanel';
@@ -15,6 +15,7 @@ import AdminSystemHealth from './AdminSystemHealth';
 import AdminActionLog from './AdminActionLog';
 import AdminUserDetailModal from './AdminUserDetailModal';
 import AdminActionDetailModal from './AdminActionDetailModal';
+import AdminApiKeysPanel from './AdminApiKeysPanel';
 import { useAuth } from '../AuthContext';
 
 const AdminPromptsPanel = lazy(() => import('./AdminPromptsPanel'));
@@ -29,7 +30,7 @@ export type Analytics = ReturnType<typeof processAnalyticsData>;
 export type ProcessedUser = Analytics['userActivityLog'][0];
 export type ActionWithUser = Analytics['allActions'][0] & { userName?: string; platform?: 'mobile_app' | 'web' };
 
-type AdminTab = 'dashboard' | 'users' | 'actionLog' | 'systemHealth' | 'prompts' | 'generations';
+type AdminTab = 'dashboard' | 'users' | 'actionLog' | 'systemHealth' | 'prompts' | 'generations' | 'apiKeys';
 
 // Helper to get date strings
 const getPastDateString = (daysAgo: number) => {
@@ -390,6 +391,7 @@ const AdminPanelScreen: React.FC<AdminPanelScreenProps> = ({ onClose }) => {
       { id: 'generations', label: 'Generations', icon: <CubeIcon className="w-5 h-5" /> },
       { id: 'systemHealth', label: 'System Health', icon: <ShieldExclamationIcon className="w-5 h-5" /> },
       { id: 'prompts', label: 'Prompts', icon: <WrenchScrewdriverIcon className="w-5 h-5" /> },
+      { id: 'apiKeys', label: 'API Keys', icon: <KeyIcon className="w-5 h-5" /> },
   ];
 
   const renderContent = () => {
@@ -406,6 +408,7 @@ const AdminPanelScreen: React.FC<AdminPanelScreenProps> = ({ onClose }) => {
             case 'generations': return <AdminImageFeedPanel analytics={analytics} />;
             case 'systemHealth': return <AdminSystemHealth analytics={analytics} />;
             case 'prompts': return <AdminPromptsPanel />;
+            case 'apiKeys': return <AdminApiKeysPanel />;
             default: return null;
         }
     }
