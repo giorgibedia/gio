@@ -178,6 +178,13 @@ export const translations = {
     cancel: 'Cancel',
     enhancePrompt: 'Enhance Prompt with AI',
     errorEnhanceFailed: 'Failed to enhance prompt.',
+    geminiApiKeyLabel: 'Gemini API Key (Custom Storage)',
+    geminiApiKeyPlaceholder: 'Paste your Gemini API key from Google AI Studio...',
+    geminiApiKeyDescription: 'Using a custom key allows this app to make requests directly, bypassing limits and making the app fully functional when deployed on Vercel or other platforms.',
+    keySaved: 'API Key Saved Successfully!',
+    keyCleared: 'API Key Cleared!',
+    saveKey: 'Save Key',
+    clearKey: 'Clear Key',
   },
   ka: {
     // Tabs
@@ -352,5 +359,12 @@ export const translations = {
     cancel: 'გაუქმება',
     enhancePrompt: 'მოთხოვნის გაუმჯობესება AI-ით',
     errorEnhanceFailed: 'მოთხოვნის გაუმჯობესება ვერ მოხერხდა.',
+    geminiApiKeyLabel: 'Gemini API Key (საკუთარი)',
+    geminiApiKeyPlaceholder: 'ჩაწერეთ თქვენი Gemini API გასაღები...',
+    geminiApiKeyDescription: 'საკუთარი გასაღების გამოყენებით, აპლიკაცია იმუშავებს შეზღუდვების გარეშე Vercel-ზე ან ნებისმიერ სხვა პლატფორმაზე გაშვებისას.',
+    keySaved: 'API გასაღები წარმატებით შეინახა!',
+    keyCleared: 'API გასაღები წაიშალა!',
+    saveKey: 'შენახვა',
+    clearKey: 'წაშლა',
   },
 };

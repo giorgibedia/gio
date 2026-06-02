@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     define: {
       // Default to empty string to prevent 'undefined' injection issues
-      'process.env.API_KEY': JSON.stringify(process.env.API_KEY || env.API_KEY || ""),
+      'process.env.API_KEY': JSON.stringify(process.env.API_KEY || env.API_KEY || process.env.VITE_API_KEY || env.VITE_API_KEY || ""),
     },
     build: {
       outDir: 'dist', // Standard output directory for Vite

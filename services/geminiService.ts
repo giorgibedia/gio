@@ -35,8 +35,21 @@ export const isMobileApp = (): boolean => {
  * A robust way to get the Gemini AI client.
  */
 const getAiClient = (): GoogleGenAI => {
-    // 1. Try to get key from Environment Variables (Secure & Recommended for Vercel/Local)
-    let apiKey = process.env.API_KEY;
+    // 0. Check for a custom user-provided API key in localStorage (e.g., when deployed on Vercel without env vars)
+    let apiKey = '';
+    try {
+        const savedKey = localStorage.getItem('user_gemini_api_key');
+        if (savedKey && savedKey.trim() !== '') {
+            apiKey = savedKey.trim();
+        }
+    } catch (err) {
+        console.warn("Could not read user_gemini_api_key from localStorage:", err);
+    }
+
+    if (!apiKey) {
+        // 1. Try to get key from Environment Variables (Secure & Recommended for Vercel/Local)
+        apiKey = process.env.API_KEY || ((import.meta as any).env ? (import.meta as any).env.VITE_API_KEY : '') || '';
+    }
 
     // 2. Fallback: If no Env Var found (e.g. mobile build, or user hasn't set up Vercel envs),
     // use the provided production key.

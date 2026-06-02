@@ -124,6 +124,14 @@ const Header: React.FC<HeaderProps> = ({ onHomeClick, onAboutClick, onGalleryCli
 
           <div className="flex items-center gap-3">
             <LanguageSelector />
+            <button 
+                onClick={onSettingsClick}
+                className="flex items-center gap-1 p-2 rounded-md transition-colors bg-white/10 text-gray-200 hover:bg-white/20"
+                title={t('profileSettings')}
+                aria-label={t('profileSettings')}
+            >
+                <Cog6ToothIcon className="w-5 h-5" />
+            </button>
             <div className="relative" ref={userMenuRef}>
                 {isGuest ? (
                     <button 

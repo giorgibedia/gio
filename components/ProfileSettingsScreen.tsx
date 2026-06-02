@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../AuthContext';
 import { useTranslations } from '../useTranslations';
 // FIX: Import the newly added PaintBrushIcon.
-import { UserCircleIcon, PaintBrushIcon, ShieldExclamationIcon, ChevronLeftIcon, CheckCircleIcon } from './icons';
+import { UserCircleIcon, PaintBrushIcon, ShieldExclamationIcon, ChevronLeftIcon, CheckCircleIcon, SparkleIcon } from './icons';
 
 interface ProfileSettingsScreenProps {
     onClose: () => void;
@@ -26,6 +26,44 @@ const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({ onClose }
     const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
     const [activeTheme, setActiveTheme] = useState('blue');
+
+    const [geminiApiKey, setGeminiApiKey] = useState('');
+    const [keyStatus, setKeyStatus] = useState<'idle' | 'saved' | 'cleared'>('idle');
+
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem('user_gemini_api_key') || '';
+            setGeminiApiKey(saved);
+        } catch (e) {
+            console.error(e);
+        }
+    }, []);
+
+    const handleSaveKey = () => {
+        try {
+            if (geminiApiKey.trim() === '') {
+                localStorage.removeItem('user_gemini_api_key');
+                setKeyStatus('cleared');
+            } else {
+                localStorage.setItem('user_gemini_api_key', geminiApiKey.trim());
+                setKeyStatus('saved');
+            }
+            setTimeout(() => setKeyStatus('idle'), 3000);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to save API Key');
+        }
+    };
+
+    const handleClearKey = () => {
+        try {
+            localStorage.removeItem('user_gemini_api_key');
+            setGeminiApiKey('');
+            setKeyStatus('cleared');
+            setTimeout(() => setKeyStatus('idle'), 3000);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to clear API Key');
+        }
+    };
 
     useEffect(() => {
         const savedTheme = localStorage.getItem('appTheme') || 'blue';
@@ -114,59 +152,106 @@ const ProfileSettingsScreen: React.FC<ProfileSettingsScreenProps> = ({ onClose }
                         ))}
                     </div>
                 </section>
-                
-                {/* Account Section */}
+
+                {/* Gemini API Key Configuration Section (For Vercel & personal setup) */}
                 <section className="bg-gray-800/50 border border-gray-700 p-6 rounded-2xl">
-                     <div className="flex items-center gap-3 mb-4">
-                        <UserCircleIcon className="w-6 h-6 text-gray-400" />
-                        <h2 className="text-xl font-bold text-white">{t('account' as any)}</h2>
+                    <div className="flex items-center gap-3 mb-4">
+                        <SparkleIcon className="w-6 h-6 text-yellow-400" />
+                        <h2 className="text-xl font-bold text-white">{t('geminiApiKeyLabel' as any)}</h2>
                     </div>
-                    <form onSubmit={handleNameUpdate} className="space-y-4">
-                        <div>
-                            <label htmlFor="displayName" className="block text-sm font-medium text-gray-400 mb-1">{t('displayName' as any)}</label>
-                            <div className="flex gap-2">
-                                <input
-                                    type="text"
-                                    id="displayName"
-                                    value={displayName}
-                                    onChange={e => setDisplayName(e.target.value)}
-                                    className="flex-grow bg-gray-800 border border-gray-600 text-gray-200 rounded-lg p-3 focus:ring-2 focus:ring-[var(--color-primary-500)] focus:outline-none transition w-full"
-                                />
-                                 <button
-                                    type="submit"
-                                    disabled={nameSaveStatus === 'saving' || displayName === user?.displayName}
-                                    className="w-24 text-center bg-[var(--color-primary-600)] hover:bg-[var(--color-primary-700)] text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 ease-in-out disabled:opacity-60 disabled:cursor-not-allowed"
+                    <p className="text-sm text-gray-400 mb-4 leading-relaxed">
+                        {t('geminiApiKeyDescription' as any)}
+                    </p>
+                    <div className="space-y-4">
+                        <div className="flex flex-col sm:flex-row gap-2">
+                            <input
+                                type="password"
+                                value={geminiApiKey}
+                                onChange={e => setGeminiApiKey(e.target.value)}
+                                placeholder={t('geminiApiKeyPlaceholder' as any)}
+                                className="flex-grow bg-gray-900 border border-gray-600 text-gray-200 placeholder-gray-500 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary-500)] transition text-sm font-mono w-full"
+                            />
+                            <div className="flex gap-2 min-w-[180px]">
+                                <button
+                                    onClick={handleSaveKey}
+                                    className="flex-grow bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 text-sm whitespace-nowrap"
                                 >
-                                    {renderNameButtonContent()}
+                                    {t('saveKey' as any)}
                                 </button>
+                                {geminiApiKey && (
+                                    <button
+                                        onClick={handleClearKey}
+                                        className="bg-gray-700 hover:bg-gray-600 text-gray-200 font-semibold py-2 px-4 rounded-lg transition-colors duration-200 text-sm whitespace-nowrap"
+                                    >
+                                        {t('clearKey' as any)}
+                                    </button>
+                                )}
                             </div>
                         </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">{t('email')}</label>
-                            <p className="text-gray-300 bg-gray-700/50 p-3 rounded-lg">{user?.email}</p>
-                        </div>
-                    </form>
+                        {keyStatus === 'saved' && (
+                            <p className="text-sm text-green-400 font-medium animate-fade-in">✓ {t('keySaved' as any)}</p>
+                        )}
+                        {keyStatus === 'cleared' && (
+                            <p className="text-sm text-yellow-500 font-medium animate-fade-in">✓ {t('keyCleared' as any)}</p>
+                        )}
+                    </div>
                 </section>
+                             {/* Account Section */}
+                {user && (
+                    <section className="bg-gray-800/50 border border-gray-700 p-6 rounded-2xl">
+                         <div className="flex items-center gap-3 mb-4">
+                            <UserCircleIcon className="w-6 h-6 text-gray-400" />
+                            <h2 className="text-xl font-bold text-white">{t('account' as any)}</h2>
+                        </div>
+                        <form onSubmit={handleNameUpdate} className="space-y-4">
+                            <div>
+                                <label htmlFor="displayName" className="block text-sm font-medium text-gray-400 mb-1">{t('displayName' as any)}</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        id="displayName"
+                                        value={displayName}
+                                        onChange={e => setDisplayName(e.target.value)}
+                                        className="flex-grow bg-gray-800 border border-gray-600 text-gray-200 rounded-lg p-3 focus:ring-2 focus:ring-[var(--color-primary-500)] focus:outline-none transition w-full"
+                                    />
+                                     <button
+                                        type="submit"
+                                        disabled={nameSaveStatus === 'saving' || displayName === user?.displayName}
+                                        className="w-24 text-center bg-[var(--color-primary-600)] hover:bg-[var(--color-primary-700)] text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 ease-in-out disabled:opacity-60 disabled:cursor-not-allowed"
+                                    >
+                                        {renderNameButtonContent()}
+                                    </button>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-1">{t('email')}</label>
+                                <p className="text-gray-300 bg-gray-700/50 p-3 rounded-lg">{user?.email}</p>
+                            </div>
+                        </form>
+                    </section>
+                )}
                 
-                 {/* Danger Zone */}
-                <section className="bg-red-900/20 border border-red-500/30 p-6 rounded-2xl">
-                     <div className="flex items-center gap-3 mb-2">
-                        <ShieldExclamationIcon className="w-6 h-6 text-red-400" />
-                        <h2 className="text-xl font-bold text-red-300">{t('dangerZone' as any)}</h2>
-                    </div>
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h3 className="font-semibold text-gray-200">{t('deleteAccount' as any)}</h3>
-                            <p className="text-sm text-gray-400">{t('deleteAccountWarning' as any)}</p>
+                {/* Danger Zone */}
+                {user && (
+                    <section className="bg-red-900/20 border border-red-500/30 p-6 rounded-2xl">
+                         <div className="flex items-center gap-3 mb-2">
+                            <ShieldExclamationIcon className="w-6 h-6 text-red-400" />
+                            <h2 className="text-xl font-bold text-red-300">{t('dangerZone' as any)}</h2>
                         </div>
-                        <button 
-                            onClick={() => setIsDeleteModalOpen(true)}
-                            className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition-colors"
-                        >
-                            {t('delete' as any)}
-                        </button>
-                    </div>
-                </section>
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h3 className="font-semibold text-gray-200">{t('deleteAccount' as any)}</h3>
+                                <p className="text-sm text-gray-400">{t('deleteAccountWarning' as any)}</p>
+                            </div>
+                            <button 
+                                onClick={() => setIsDeleteModalOpen(true)}
+                                className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition-colors"
+                            >
+                                {t('delete' as any)}
+                            </button>
+                        </div>
+                    </section>
+                )}
             </div>
             
             {isDeleteModalOpen && (
