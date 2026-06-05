@@ -26,45 +26,60 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: `Method ${req.method} Not Allowed. Please use POST.` });
   }
 
-  const { prompt, images, aspectRatio, imageSize } = req.body || {};
-
-  if (!prompt || typeof prompt !== 'string') {
-    return res.status(400).json({ error: 'A text prompt is required.' });
-  }
+  const { prompt, images, aspectRatio, imageSize, contents } = req.body || {};
 
   try {
-    console.log(`Generating image via Vertex AI Serverless Route for prompt: "${prompt}", with ${images?.length || 0} reference images.`);
-    
-    // Build parts array dynamically. Reference images must be sent as inlineData parts before the text prompt.
-    const parts: any[] = [];
-    
-    if (images && Array.isArray(images)) {
-      for (const img of images) {
-        if (typeof img === 'string' && img.startsWith('data:')) {
-          const match = img.match(/^data:(.+);base64,(.+)$/);
-          if (match) {
-            parts.push({
-              inlineData: {
-                mimeType: match[1],
-                data: match[2],
-              },
-            });
+    let sanitizedContents: any[] = [];
+    let systemInstruction: string | undefined = undefined;
+
+    if (prompt && typeof prompt === 'string') {
+      console.log(`Generating image via Vertex AI Serverless Route for prompt: "${prompt}", with ${images?.length || 0} reference images.`);
+      
+      // Build parts array dynamically. Reference images must be sent as inlineData parts before the text prompt.
+      const parts: any[] = [];
+      
+      if (images && Array.isArray(images)) {
+        for (const img of images) {
+          if (typeof img === 'string' && img.startsWith('data:')) {
+            const match = img.match(/^data:(.+);base64,(.+)$/);
+            if (match) {
+              parts.push({
+                inlineData: {
+                  mimeType: match[1],
+                  data: match[2],
+                },
+              });
+            }
           }
         }
       }
+      
+      // Add prompt text as the final part
+      parts.push({ text: prompt });
+      sanitizedContents = [{ role: 'user', parts: parts }];
+    } else if (contents && Array.isArray(contents)) {
+      console.log(`Generating image with customized contents. Length: ${contents.length}`);
+      for (const message of contents) {
+        const role = message.role?.toLowerCase();
+        if (role === 'system' || role === 'developer') {
+          systemInstruction = message.parts?.[0]?.text || message.text || "";
+        } else {
+          const mappedRole = (role === 'assistant' || role === 'model') ? 'model' : 'user';
+          const parts = message.parts || [{ text: message.text || "" }];
+          sanitizedContents.push({ role: mappedRole, parts });
+        }
+      }
+    } else {
+      return res.status(400).json({ error: 'A text prompt or a valid contents array is required.' });
     }
-    
-    // Add prompt text as the final part
-    parts.push({ text: prompt });
 
     // Call the latest image generation model via Vertex AI
     const response = await ai.models.generateContent({
       model: 'gemini-3.1-flash-image',
-      contents: {
-        parts: parts,
-      },
+      contents: sanitizedContents,
       config: {
         responseModalities: ["IMAGE"],
+        ...(systemInstruction ? { systemInstruction } : {}),
         imageConfig: {
           aspectRatio: aspectRatio || '1:1',
           imageSize: imageSize || '1K',
