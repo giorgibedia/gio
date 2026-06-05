@@ -73,7 +73,7 @@ const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect }) => {
                 <p className="text-gray-300 mb-6">{t('androidAppDescription' as any)}</p>
                 
                 <a 
-                    href="https://www.mediafire.com/file/8ikap1lsebszso8/PixAI+beta+version+MADE+BY+G.B+.apk/file" 
+                    href="https://www.mediafire.com/file/xnlfw1hk4839ntj/PIXAI-V2-BY-GB.apk/file" 
                     target="_blank" 
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-full transition-all duration-300 shadow-lg hover:shadow-green-500/30 hover:-translate-y-1 mb-6"

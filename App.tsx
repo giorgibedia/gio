@@ -1284,10 +1284,10 @@ const handleResetLogo = useCallback(() => {
                             <button onClick={handleDownload} className="bg-[var(--color-primary-500)] px-3 py-2 text-xs sm:text-sm font-bold text-white rounded-md hover:bg-[var(--color-primary-600)] transition-colors">{t('downloadImage')}</button>
                         </div>
                     </div>
-                    <p className="text-xs text-gray-500 pt-2">2025 all reserved from G.B</p>
+                    <p className="text-xs text-gray-500 pt-2">2026 all reserved from G.B</p>
                 </div>
             ) : (
-                <p className="text-center text-xs text-gray-500">2025 all reserved from G.B</p>
+                <p className="text-center text-xs text-gray-500">2026 all reserved from G.B</p>
             )}
         </footer>
         
