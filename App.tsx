@@ -603,7 +603,7 @@ const App: React.FC = () => {
     }
   }, [currentImage, t, addImageToHistory]);
 
-  const handleMagicGenerate = useCallback(async () => {
+  const handleMagicGenerate = useCallback(async (aspectRatio?: string, imageSize?: string) => {
     if (!prompt.trim()) {
         setError(t('errorEnterDescription'));
         return;
@@ -622,7 +622,7 @@ const App: React.FC = () => {
             finalImageUrl = await generateMagicEdit(currentImage, prompt);
         } else {
             // Case 1: Generate new image from text
-            const imageUrl = await generateImageFromText(prompt);
+            const imageUrl = await generateImageFromText(prompt, aspectRatio, imageSize);
             const watermarkedImageUrl = await addWatermark(imageUrl);
             setHistory([watermarkedImageUrl]);
             setHistoryIndex(0);

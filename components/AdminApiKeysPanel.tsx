@@ -5,13 +5,11 @@ import Spinner from './Spinner';
 
 const AdminApiKeysPanel: React.FC = () => {
     const [geminiKey, setGeminiKey] = useState('');
-    const [kieKey, setKieKey] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [showGemini, setShowGemini] = useState(false);
-    const [showKie, setShowKie] = useState(false);
 
     useEffect(() => {
         let isMounted = true;
@@ -26,7 +24,6 @@ const AdminApiKeysPanel: React.FC = () => {
                 if (snapshot.exists() && isMounted) {
                     const data = snapshot.val();
                     setGeminiKey(data.gemini_api_key || '');
-                    setKieKey(data.kie_api_key || '');
                 }
             } catch (err) {
                 console.error("Error fetching admin API keys:", err);
@@ -60,8 +57,7 @@ const AdminApiKeysPanel: React.FC = () => {
         try {
             const settingsRef = ref(database, 'settings');
             await set(settingsRef, {
-                gemini_api_key: geminiKey.trim(),
-                kie_api_key: kieKey.trim()
+                gemini_api_key: geminiKey.trim()
             });
             setSuccessMessage("API keys updated successfully for all users!");
             setTimeout(() => setSuccessMessage(null), 3000);
@@ -126,32 +122,6 @@ const AdminApiKeysPanel: React.FC = () => {
                     </div>
                     <p className="text-xs text-gray-400">
                         Used for AI-assisted prompt enhancement.
-                    </p>
-                </div>
-
-                {/* Kie.ai API Key */}
-                <div className="space-y-2">
-                    <label className="block text-sm font-bold text-gray-300">
-                        Default Kie.ai API Key
-                    </label>
-                    <div className="relative">
-                        <input
-                            type={showKie ? "text" : "password"}
-                            value={kieKey}
-                            onChange={(e) => setKieKey(e.target.value)}
-                            placeholder="8add62..."
-                            className="w-full bg-gray-900 border border-gray-650 text-gray-100 placeholder-gray-500 rounded-xl p-3.5 pr-12 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary-500)] focus:border-transparent transition text-sm font-mono"
-                        />
-                        <button
-                            type="button"
-                            onClick={() => setShowKie(!showKie)}
-                            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors"
-                        >
-                            {showKie ? "Hide" : "Show"}
-                        </button>
-                    </div>
-                    <p className="text-xs text-gray-400">
-                        Used as the primary engine for high-fidelity image generation and editing.
                     </p>
                 </div>
 

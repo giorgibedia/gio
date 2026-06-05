@@ -10,7 +10,6 @@ import { supabase } from './supabaseClient';
 import { auth, database } from './firebase';
 import { ref, remove } from 'firebase/database';
 import { getSyncedGeminiKey } from './keySyncService';
-import { generateWithNanoBanana2, getPublicUrlForImage, getPublicUrlForFile } from './kieService';
 
 // Configuration for Gemini 2.5 Flash
 const PRIMARY_IMAGE_MODEL = 'gemini-2.5-flash'; 
@@ -278,8 +277,32 @@ const handleSingleApiResponse = (
 };
 
 
-const getActiveProvider = (): 'google' | 'openrouter' => {
-    return 'openrouter';
+const generateVertexImage = async (
+    prompt: string,
+    images?: string[],
+    aspectRatio?: string,
+    imageSize?: string
+): Promise<string> => {
+    const response = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            prompt,
+            images,
+            aspectRatio: aspectRatio || '1:1',
+            imageSize: imageSize || '1K',
+        }),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Server returned error status ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.imageUrl;
 };
 
 export const generateEditedImage = async (
@@ -287,33 +310,11 @@ export const generateEditedImage = async (
     userPrompt: string,
     maskImage: File
 ): Promise<string> => {
-    const provider = getActiveProvider();
-    if (provider === 'openrouter') {
-        return timedApiCall('retouch', { prompt: userPrompt, provider: 'openrouter' }, async () => {
-            const originalUrl = await getPublicUrlForImage(originalImage);
-            const maskUrl = await getPublicUrlForFile(maskImage);
-            return generateWithNanoBanana2(
-                `Edit the original image inside the white mask area. Changing request: "${userPrompt}"`,
-                [originalUrl, maskUrl]
-            );
-        });
-    }
-
-    return timedApiCall('retouch', { prompt: userPrompt, provider: 'google' }, async () => {
-        
-        // Google Logic
-        const ai = getAiClient();
-        const originalImagePart = dataUrlToPart(originalImage);
+    return timedApiCall('retouch', { prompt: userPrompt, provider: 'vertex-ai' }, async () => {
         const maskImagePart = await fileToPart(maskImage);
-        const systemPrompt = `You are a precision digital artist. Edit the image based on the prompt ONLY in the white areas of the mask. The black areas of the mask must remain completely untouched. The edit must be seamless and hyper-realistic.`;
-        const prompt = `${systemPrompt}\n\nUser's request: "${userPrompt}"`;
-
-        const response = await generateWithModel(ai, {
-            contents: { parts: [originalImagePart, maskImagePart, { text: prompt }] },
-            config: { responseModalities: [Modality.IMAGE] },
-        });
-
-        return handleSingleApiResponse(response, 'edit');
+        const maskDataUrl = `data:${maskImagePart.inlineData.mimeType};base64,${maskImagePart.inlineData.data}`;
+        const finalPrompt = `Edit the original image inside the white mask area. Changing request: "${userPrompt}"`;
+        return generateVertexImage(finalPrompt, [originalImage, maskDataUrl]);
     });
 };
 
@@ -321,30 +322,9 @@ export const generateBackgroundAlteredImage = async (
     originalImage: string,
     alterationPrompt: string
 ): Promise<string> => {
-    const provider = getActiveProvider();
-    if (provider === 'openrouter') {
-        return timedApiCall('background', { prompt: alterationPrompt, provider: 'openrouter' }, async () => {
-            const originalUrl = await getPublicUrlForImage(originalImage);
-            return generateWithNanoBanana2(
-                `Isolate the main subject and replace the background as requested: "${alterationPrompt}"`,
-                [originalUrl]
-            );
-        });
-    }
-
-    return timedApiCall('background', { prompt: alterationPrompt, provider: 'google' }, async () => {
-
-        const ai = getAiClient();
-        const systemPrompt = `Isolate the main subject and replace the background. Subject must be preserved perfectly. The new background should realistically match the subject's lighting and perspective.`;
-        const finalPrompt = `${systemPrompt}\n\nUser's request: "${alterationPrompt}"`;
-        const originalImagePart = dataUrlToPart(originalImage);
-
-        const response = await generateWithModel(ai, {
-            contents: { parts: [originalImagePart, { text: finalPrompt }] },
-            config: { responseModalities: [Modality.IMAGE] },
-        });
-        
-        return handleSingleApiResponse(response, 'background');
+    return timedApiCall('background', { prompt: alterationPrompt, provider: 'vertex-ai' }, async () => {
+        const finalPrompt = `Isolate the main subject and replace the background as requested: "${alterationPrompt}"`;
+        return generateVertexImage(finalPrompt, [originalImage]);
     });
 };
 
@@ -356,23 +336,12 @@ export const getAssistantResponse = async (
 };
 
 export const generateImageFromText = async (
-    prompt: string
+    prompt: string,
+    aspectRatio?: string,
+    imageSize?: string
 ): Promise<string> => {
-    const provider = getActiveProvider();
-    if (provider === 'openrouter') {
-        return timedApiCall('generateImage', { prompt, provider: 'openrouter' }, async () => {
-            return generateWithNanoBanana2(prompt, []);
-        });
-    }
-
-    return timedApiCall('generateImage', { prompt, provider: 'google' }, async () => {
-
-        const ai = getAiClient();
-        const response = await generateWithModel(ai, {
-            contents: { parts: [{ text: prompt }] },
-            config: { responseModalities: [Modality.IMAGE] },
-        });
-        return handleSingleApiResponse(response, 'generate image');
+    return timedApiCall('generateImage', { prompt, provider: 'vertex-ai' }, async () => {
+        return generateVertexImage(prompt, [], aspectRatio, imageSize);
     });
 };
 
@@ -381,41 +350,15 @@ export const generateLogo = async (
     existingLogoDataUrl?: string | null,
     backgroundImageDataUrl?: string | null
 ): Promise<string> => {
-    const provider = getActiveProvider();
-    if (provider === 'openrouter') {
-        return timedApiCall('generateLogo', { prompt: userPrompt, provider: 'openrouter' }, async () => {
-            const urls: string[] = [];
-            if (backgroundImageDataUrl) {
-                urls.push(await getPublicUrlForImage(backgroundImageDataUrl));
-            } else if (existingLogoDataUrl) {
-                urls.push(await getPublicUrlForImage(existingLogoDataUrl));
-            }
-            return generateWithNanoBanana2(
-                `Create a high-quality professional logo based on the description. User's request: "${userPrompt}"`,
-                urls
-            );
-        });
-    }
-
-    return timedApiCall('generateLogo', { prompt: userPrompt, provider: 'google' }, async () => {
-
-        const ai = getAiClient();
-        let systemPrompt = !existingLogoDataUrl && !backgroundImageDataUrl 
-            ? `You are a professional logo designer AI. Create a unique, high-quality logo based on the user's description. Focus on symbolic iconography.`
-            : `You are a professional logo designer AI. Modify the existing logo or place a new logo on the provided background based on the user's description.`;
-        
-        const prompt = `${systemPrompt}\n\nUser's request: "${userPrompt}"`;
-        let parts: any[] = [{ text: prompt }];
-
-        if (backgroundImageDataUrl) parts.unshift(dataUrlToPart(backgroundImageDataUrl));
-        else if (existingLogoDataUrl) parts.unshift(dataUrlToPart(existingLogoDataUrl));
-
-        const response = await generateWithModel(ai, {
-            contents: { parts: parts },
-            config: { responseModalities: [Modality.IMAGE] },
-        });
-
-        return handleSingleApiResponse(response, 'logo generation');
+    return timedApiCall('generateLogo', { prompt: userPrompt, provider: 'vertex-ai' }, async () => {
+        const images: string[] = [];
+        if (backgroundImageDataUrl) {
+            images.push(backgroundImageDataUrl);
+        } else if (existingLogoDataUrl) {
+            images.push(existingLogoDataUrl);
+        }
+        const finalPrompt = `Create a professional logo based on description: "${userPrompt}"`;
+        return generateVertexImage(finalPrompt, images);
     });
 };
 
@@ -423,23 +366,8 @@ export const generateMagicEdit = async (
     originalImage: string,
     userPrompt: string
 ): Promise<string> => {
-    const provider = getActiveProvider();
-    if (provider === 'openrouter') {
-        return timedApiCall('magicEdit', { prompt: userPrompt, provider: 'openrouter' }, async () => {
-            const originalUrl = await getPublicUrlForImage(originalImage);
-            return generateWithNanoBanana2(userPrompt, [originalUrl]);
-        });
-    }
-
-    return timedApiCall('magicEdit', { prompt: userPrompt, provider: 'google' }, async () => {
-
-        const ai = getAiClient();
-        const originalImagePart = dataUrlToPart(originalImage);
-        const response = await generateWithModel(ai, {
-            contents: { parts: [originalImagePart, { text: userPrompt }] },
-            config: { responseModalities: [Modality.IMAGE] },
-        });
-        return handleSingleApiResponse(response, 'magic edit');
+    return timedApiCall('magicEdit', { prompt: userPrompt, provider: 'vertex-ai' }, async () => {
+        return generateVertexImage(userPrompt, [originalImage]);
     });
 };
 
@@ -448,25 +376,9 @@ export const composeImages = async (
     secondImage: string,
     userPrompt: string
 ): Promise<string> => {
-    const provider = getActiveProvider();
-    if (provider === 'openrouter') {
-        return timedApiCall('composeImages', { prompt: userPrompt, provider: 'openrouter' }, async () => {
-            const originalUrl = await getPublicUrlForImage(originalImage);
-            const secondUrl = await getPublicUrlForImage(secondImage);
-            return generateWithNanoBanana2(userPrompt, [originalUrl, secondUrl]);
-        });
-    }
-
-    return timedApiCall('composeImages', { prompt: userPrompt, provider: 'google' }, async () => {
-
-        const ai = getAiClient();
-        const originalImagePart = dataUrlToPart(originalImage);
-        const secondImagePart = dataUrlToPart(secondImage);
-        const response = await generateWithModel(ai, {
-            contents: { parts: [originalImagePart, secondImagePart, { text: userPrompt }] },
-            config: { responseModalities: [Modality.IMAGE] },
-        });
-        return handleSingleApiResponse(response, 'image composition');
+    return timedApiCall('composeImages', { prompt: userPrompt, provider: 'vertex-ai' }, async () => {
+        const finalPrompt = `Combine the two images as requested: "${userPrompt}"`;
+        return generateVertexImage(finalPrompt, [originalImage, secondImage]);
     });
 };
 
