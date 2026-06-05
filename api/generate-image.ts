@@ -6,9 +6,11 @@ const ai = new GoogleGenAI({
   vertexai: true,
   project: 'kinetic-axle-482412-m5',
   location: 'us-central1',
-  credentials: {
-    client_email: 'vertex-ai-dev@kinetic-axle-482412-m5.iam.gserviceaccount.com',
-    private_key: privateKey,
+  googleAuthOptions: {
+    credentials: {
+      client_email: 'vertex-ai-dev@kinetic-axle-482412-m5.iam.gserviceaccount.com',
+      private_key: privateKey,
+    }
   },
   httpOptions: {
     headers: {
